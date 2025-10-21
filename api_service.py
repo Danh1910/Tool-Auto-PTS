@@ -9,11 +9,55 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 
+from datetime import datetime
+
+
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 FOLDER_ID = "11zEsr74gEuYjPB7E2ibQd6i3LsLmFjW4"  # ID thư mục Drive bạn gửi
 
+def _today_str_vn():
+    """Trả về chuỗi ngày theo Asia/Ho_Chi_Minh dạng dd_mm_YYYY."""
+    try:
+        from zoneinfo import ZoneInfo  # Python 3.9+
+        tz = ZoneInfo("Asia/Ho_Chi_Minh")
+        now = datetime.now(tz)
+    except Exception:
+        now = datetime.now()
+    return now.strftime("%d_%m_%Y")
+
+def _find_or_create_drive_folder(service, parent_id: str, folder_name: str) -> str:
+    """
+    Tìm folder con theo tên trong parent_id. Nếu không có thì tạo mới.
+    Trả về: folder_id.
+    """
+    # Tìm folder tên trùng, nằm trong parent, chưa bị trash
+    query = (
+        f"name = '{folder_name}' and "
+        f"mimeType = 'application/vnd.google-apps.folder' and "
+        f"'{parent_id}' in parents and trashed = false"
+    )
+    res = service.files().list(
+        q=query,
+        spaces='drive',
+        fields='files(id, name)',
+        pageSize=10
+    ).execute()
+    files = res.get('files', [])
+    if files:
+        return files[0]['id']
+
+    # Không có -> tạo folder mới
+    metadata = {
+        'name': folder_name,
+        'mimeType': 'application/vnd.google-apps.folder',
+        'parents': [parent_id]
+    }
+    folder = service.files().create(body=metadata, fields='id').execute()
+    return folder['id']
+
 def upload_to_drive(file_path, filename):
-    """Upload file JPG lên Google Drive vào đúng folder ID."""
+    """Upload file JPG lên Google Drive vào subfolder ngày (dd_mm_YYYY) trong FOLDER_ID."""
+    # ---- Auth ----
     creds = None
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
@@ -28,9 +72,14 @@ def upload_to_drive(file_path, filename):
 
     service = build('drive', 'v3', credentials=creds)
 
+    # ---- Lấy/ tạo folder ngày ----
+    date_folder_name = _today_str_vn()  # vd: "21_10_2025"
+    daily_folder_id = _find_or_create_drive_folder(service, FOLDER_ID, date_folder_name)
+
+    # ---- Upload file vào folder ngày ----
     file_metadata = {
         'name': filename,
-        'parents': [FOLDER_ID]
+        'parents': [daily_folder_id]   # <== điểm khác biệt quan trọng
     }
     media = MediaFileUpload(file_path, mimetype='image/jpeg')
 
@@ -40,10 +89,8 @@ def upload_to_drive(file_path, filename):
         fields='id, webViewLink'
     ).execute()
 
-    print(f"[UPLOAD] File uploaded to Drive: {uploaded_file['webViewLink']}")
+    print(f"[UPLOAD] File uploaded to Drive (/{date_folder_name}): {uploaded_file['webViewLink']}")
     return uploaded_file['webViewLink']
-
-
 
 app = Flask(__name__)
 

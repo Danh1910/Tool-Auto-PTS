@@ -222,49 +222,89 @@ export_psd_configurable_fixed.jsx (with logging)
 
     function runActionsOnCurrentDoc(innerActions) {
         var doc = app.activeDocument;
-        __log("runActionsOnCurrentDoc: innerActions=" + innerActions.length);
+        var didChange = false;
+
         for (var i = 0; i < innerActions.length; i++) {
             var act = innerActions[i];
             if (!act || !act.type) continue;
             var t = act.type;
-            __log("[inner] Action[" + i + "] type=" + t + (act.groupPath?(" | groupPath="+act.groupPath):"") + (typeof act.showLayer!=="undefined"?(" | showLayer="+act.showLayer):"") + (act.layerName?(" | layerName="+act.layerName):""));
 
             if (t === "group_choice") {
                 var gp = toParts(act.groupPath || "");
                 var group = getLayerSetByPath(doc, gp);
                 __log("[inner] group_choice: group " + (group ? "FOUND" : "NOT FOUND"));
-                if (!group) continue;
+
+                if (!group) {
+                    // báo thiếu groupPath (bên trong SO)
+                    __push_unique(__report.missingGroupPaths,
+                                (act.__soPrefix ? (act.__soPrefix + ">") : "") + (act.groupPath || ""));
+                    continue;
+                }
                 setAllLayersVisibility(group, false);
                 var ok = setArtLayerVisibleInGroup(group, act.showLayer);
                 if (!ok) {
                     var f = findArtLayerByName(group, act.showLayer, true);
                     __log("[inner] group_choice: showLayer " + (f ? "FOUND (recursive)" : "NOT FOUND"));
-                    if (f) f.visible = true;
+                    if (f) { f.visible = true; didChange = true; }
+                    else {
+                        __report.missingShowLayers.push({
+                            groupPath: (act.__soPrefix ? (act.__soPrefix + ">") : "") + (act.groupPath || ""),
+                            showLayer: String(act.showLayer)
+                        });
+                    }
+                } else {
+                    didChange = true;
                 }
             }
             else if (t === "text_replace") {
-                if (!act.layerName || typeof act.text === "undefined") { __log("[inner] text_replace: missing params"); continue; }
+                if (!act.layerName || typeof act.text === "undefined") {
+                    __pushParamError(i, t, "Missing layerName or text", { groupPath: act.groupPath || "" });
+                    continue;
+                }
                 var target = doc;
                 if (act.groupPath) {
                     var gp2 = toParts(act.groupPath);
                     var g2 = getLayerSetByPath(doc, gp2);
                     __log("[inner] text_replace: group " + (g2 ? "FOUND" : "NOT FOUND"));
-                    if (g2) target = g2;
+                    if (!g2) {
+                        __push_unique(__report.missingGroupPaths,
+                                    (act.__soPrefix ? (act.__soPrefix + ">") : "") + act.groupPath);
+                        continue;
+                    }
+                    target = g2;
                 }
                 var tl = findArtLayerByName(target, act.layerName, true);
                 __log("[inner] text_replace: layer " + (tl ? "FOUND" : "NOT FOUND"));
-                if (tl && typeof tl.textItem !== "undefined")
+                if (tl && typeof tl.textItem !== "undefined") {
                     tl.textItem.contents = String(act.text);
+                    didChange = true;
+                } else {
+                __report.missingTextTargets.push({
+                    groupPath: (act.__soPrefix ? (act.__soPrefix + ">") : "") + (act.groupPath || ""),
+                    layerName: String(act.layerName)
+                });
             }
-            else if (t === "visibility") {
-                if (!act.path || typeof act.visible === "undefined") { __log("[inner] visibility: missing params"); continue; }
-                var p = toParts(act.path);
-                var obj = findContainerOrLayer(doc, p);
-                __log("[inner] visibility: target " + (obj && obj.obj ? "FOUND" : "NOT FOUND"));
-                if (obj && obj.obj) obj.obj.visible = !!act.visible;
+        }
+        else if (t === "visibility") {
+            if (!act.path || typeof act.visible === "undefined") {
+                __pushParamError(i, t, "Missing path or visible", null);
+                continue;
+            }
+            var p = toParts(act.path);
+            var obj = findContainerOrLayer(doc, p);
+            __log("[inner] visibility: target " + (obj && obj.obj ? "FOUND" : "NOT FOUND"));
+            if (obj && obj.obj) {
+                obj.obj.visible = !!act.visible;
+                didChange = true;
+            } else {
+                __push_unique(__report.missingPaths,
+                              (act.__soPrefix ? (act.__soPrefix + ">") : "") + act.path);
             }
         }
     }
+    return didChange;
+}
+
 
     ////////////////////////////
     // Smart Object Helpers (mới - fallback tự động)
@@ -300,17 +340,28 @@ export_psd_configurable_fixed.jsx (with logging)
         editSmartObjectContents();
         var innerDoc = app.activeDocument;
         __log("SO: innerDoc opened -> " + innerDoc.name + " | run " + innerActions.length + " action(s)");
-        var ok = true;
+
+        var changed = false;
         try {
-            runActionsOnCurrentDoc(innerActions);
-            try { innerDoc.save(); __log("SO: innerDoc saved"); } catch (e) { __log("SO: save error: " + e); }
-            try { innerDoc.close(SaveOptions.SAVECHANGES); __log("SO: innerDoc closed (SAVECHANGES)"); } catch (e2) { __log("SO: close error: " + e2); }
-        } catch (e3) {
-            ok = false;
-            __log("SO: runActions error: " + e3);
-            try { innerDoc.close(SaveOptions.DONOTSAVECHANGES); __log("SO: innerDoc closed (DONOTSAVECHANGES)"); } catch (ee) {}
+            // truyền dấu vết SO để report có path đầy đủ
+            for (var i = 0; i < innerActions.length; i++) {
+                innerActions[i].__soPrefix = soLayer.name; // thêm tiền tố
+            }
+            changed = runActionsOnCurrentDoc(innerActions);
+
+            if (changed) {
+                try { innerDoc.save(); __log("SO: innerDoc saved"); } catch (e) { __log("SO: save error: " + e); }
+                try { innerDoc.close(SaveOptions.SAVECHANGES); __log("SO: innerDoc closed (SAVECHANGES)"); } catch (e2) { __log("SO: close error: " + e2); }
+            } else {
+                __log("SO: no changes detected; closing without save");
+                try { innerDoc.close(SaveOptions.DONOTSAVECHANGES); } catch (e3) {}
+            }
+        } catch (e4) {
+            __log("SO: runActions error: " + e4);
+            try { innerDoc.close(SaveOptions.DONOTSAVECHANGES); } catch (ee) {}
+            return false;
         }
-        return ok;
+        return changed;
     }
 
     function tryActionViaSmartFallback(doc, act) {
@@ -330,15 +381,16 @@ export_psd_configurable_fixed.jsx (with logging)
             var cloned = {};
             for (var k in act) if (act.hasOwnProperty(k)) cloned[k] = act[k];
             cloned.groupPath = remapped;
-            __log("SO-FALLBACK: open SO='" + seg + "' and run cloned action with remapped groupPath='" + remapped + "'");
 
-            var ok = openSmartObjectAndRun(soLayer, [cloned]);
-            __log("SO-FALLBACK: handler returned " + ok);
-            if (ok) return true;
+            __log("SO-FALLBACK: open SO='" + seg + "' and run cloned action with remapped groupPath='" + remapped + "'");
+            var changed = openSmartObjectAndRun(soLayer, [cloned]);
+            __log("SO-FALLBACK: handler returned " + changed);
+            if (changed) return true; // chỉ coi là thành công khi có thay đổi
         }
         __log("SO-FALLBACK: no suitable SmartObject found / all attempts failed");
         return false;
     }
+
 
     ////////////////////////////
     // Main Execution
