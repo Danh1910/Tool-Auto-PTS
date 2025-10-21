@@ -1,0 +1,54 @@
+{
+  "psdFilePath": "C:\\Users\\MSI\\Design_PSD\\BSCK9-NTM-THD-SCK.psd",
+  "outputFolder": "C:\\Users\\MSI\\Design_PSD\\Image_output",
+  "outputFilename": "4770616EXNPH_200319.jpg",
+  "jpgQuality": 12,
+  "actions": [
+    {
+      "type": "group_choice",
+      "groupPath": "Group 6>Girl>Skin",
+      "showLayer": "Skin 2"
+    },
+    {
+      "type": "group_choice",
+      "groupPath": "Group 6>Girl>Shirt",
+      "showLayer": "T-shirt 2"
+    },
+    {
+      "type": "group_choice",
+      "groupPath": "Group 6>Girl>Pants",
+      "showLayer": "Pants 7"
+    },
+    {
+      "type": "group_choice",
+      "groupPath": "Group 6>Girl>Hair",
+      "showLayer": "Hair 15"
+    },
+    {
+      "type": "group_choice",
+      "groupPath": "Group 6>Girl>Eye",
+      "showLayer": "Eye 3"
+    },
+    {
+      "type": "group_choice",
+      "groupPath": "Group 6>Girl>Glasses",
+      "showLayer": "Glasses 1"
+    },
+    {
+      "type": "group_choice",
+      "groupPath": "Group 6>Girl>Book",
+      "showLayer": "Book 3"
+    },
+    {
+      "type": "group_choice",
+      "groupPath": "Group 6>Girl>Group 4",
+      "showLayer": "Just a Girl Who Loves Books"
+    },
+    {
+      "type": "text_replace",
+      "groupPath": "",
+      "layerName": "Jessica",
+      "text": "Janette"
+    }
+  ]
+}

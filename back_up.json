@@ -1,0 +1,59 @@
+{
+  "psdFilePath": "C:\\Users\\MSI\\Design_PSD\\BOK-LOVE10-TTD-MUG fixed.psd",
+  "outputFolder": "C:\\Users\\MSI\\Design_PSD\\Image_output",
+  "outputFilename": "4249860ZPCNW_201768.jpg",
+  "jpgQuality": 12,
+  "actions": [
+    {
+      "type": "group_choice",
+      "groupPath": "Color",
+      "showLayer": "Wood"
+    },
+    {
+      "type": "group_choice",
+      "groupPath": "girl right>body",
+      "showLayer": "Light"
+    },
+    {
+      "type": "group_choice",
+      "groupPath": "girl right>quần",
+      "showLayer": "6"
+    },
+    {
+      "type": "group_choice",
+      "groupPath": "girl right>áo",
+      "showLayer": "6"
+    },
+    {
+      "type": "group_choice",
+      "groupPath": "girl right>giày",
+      "showLayer": "White"
+    },
+    {
+      "type": "group_choice",
+      "groupPath": "girl right>kính",
+      "showLayer": "1"
+    },
+    {
+      "type": "group_choice",
+      "groupPath": "girl right>tóc",
+      "showLayer": "7"
+    },
+    {
+      "type": "group_choice",
+      "groupPath": "girl right>book",
+      "showLayer": "10"
+    },
+    {
+      "type": "group_choice",
+      "groupPath": "aaa",
+      "showLayer": "Custom Name"
+    },
+    {
+      "type": "text_replace",
+      "groupPath": "Patricia",
+      "layerName": "Patricia",
+      "text": "Marlene"
+    }
+  ]
+}
