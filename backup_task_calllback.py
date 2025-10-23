@@ -99,9 +99,9 @@ def _run_photoshop(order_id: str, psd_filename: str, actions: list):
 
     # file tạm theo job_id để không đè nhau
     cwd         = os.getcwd()
-    config_path = os.path.join(cwd, "psd_config.json")
-    result_path = os.path.join(cwd, "psd_result.json")
-    log_path    = os.path.join(cwd, "psd_result.log")  # gộp chung log
+    config_path = os.path.join(cwd, f"psd_config_{job_id}.json")
+    result_path = os.path.join(cwd, f"psd_result_{job_id}.json")
+    log_path    = os.path.join(cwd, f"psd_result_{order_id}_debug.log")
 
     # Ghi config + LOG
     with open(config_path, "w", encoding="utf-8") as f:
@@ -228,8 +228,7 @@ def process_design_job(payload: dict):
             order_id,
             status=result.get("status"),
             drive_url=result.get("outputPath"),
-            message=result.get("message"),
-            report=result.get("report")
+            message=result.get("message")
         )
         return result
 
@@ -244,7 +243,7 @@ def process_design_job(payload: dict):
         _callback(order_id, status="error", drive_url=None, message=str(e))
         return {"status":"error","message":str(e)}
 
-def _callback(order_id: str, status: str, drive_url: str | None, message: str | None,  report: dict | None):
+def _callback(order_id: str, status: str, drive_url: str | None, message: str | None):
     """Gửi kết quả về PHP theo URL hardcode."""
     if not DEFAULT_CALLBACK_URL:
         _log("[WARN] No DEFAULT_CALLBACK_URL configured; skip callback.")
@@ -258,7 +257,6 @@ def _callback(order_id: str, status: str, drive_url: str | None, message: str | 
         "status": status,
         "drive_url": drive_url,
         "message": message,
-        "report": report or {},
         "logs": (job.meta.get("logs") if job else []),
         "ts": int(time.time())
     }
