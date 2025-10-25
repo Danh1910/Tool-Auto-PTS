@@ -1,6 +1,6 @@
 #target photoshop
 /*
-export_psd_configurable_fixed.jsx (unified traversal with full reporting)
+export_psd_configurable.jsx (unified traversal with full reporting)
 - Đọc config JSON (qua $.arguments[0] hoặc mặc định)
 - Hỗ trợ: group_choice, text_replace, visibility, smart_edit_contents
 - Duyệt linh hoạt: tự nhận biết group hoặc SmartObject (SO) nhiều cấp
@@ -209,6 +209,51 @@ export_psd_configurable_fixed.jsx (unified traversal with full reporting)
         return false; 
     }
 
+    // ==== Helpers ====
+    function __hexToRGB(hex) {
+        var h = String(hex).replace(/^#/, '');
+        if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+        var r = parseInt(h.substring(0,2), 16);
+        var g = parseInt(h.substring(2,4), 16);
+        var b = parseInt(h.substring(4,6), 16);
+        return {r:r, g:g, b:b};
+    }
+
+    function __setTextColorHex(textLayer, hex) {
+        var rgb = __hexToRGB(hex);
+        var c = new SolidColor();
+        c.rgb.red   = rgb.r;
+        c.rgb.green = rgb.g;
+        c.rgb.blue  = rgb.b;
+        textLayer.textItem.color = c;
+    }
+
+    // Bật/đổi Color Overlay cho layer đang active (Action Manager)
+    function __setColorOverlayHex(hex, opacityPct) {
+        var rgb = __hexToRGB(hex);
+        var desc = new ActionDescriptor();
+        var ref  = new ActionReference();
+        ref.putProperty(charIDToTypeID('Prpr'), stringIDToTypeID('layerEffects'));
+        ref.putEnumerated(charIDToTypeID('Lyr '), charIDToTypeID('Ordn'), charIDToTypeID('Trgt'));
+        desc.putReference(charIDToTypeID('null'), ref);
+
+        var fx = new ActionDescriptor();
+        var so = new ActionDescriptor();
+        so.putBoolean(stringIDToTypeID('enabled'), true);
+        so.putUnitDouble(stringIDToTypeID('opacity'), charIDToTypeID('#Prc'), opacityPct || 100);
+
+        var color = new ActionDescriptor();
+        color.putDouble(charIDToTypeID('Rd  '), rgb.r);
+        color.putDouble(charIDToTypeID('Grn '), rgb.g);
+        color.putDouble(charIDToTypeID('Bl  '), rgb.b);
+        so.putObject(charIDToTypeID('Clr '), charIDToTypeID('RGBC'), color);
+
+        fx.putObject(stringIDToTypeID('solidFill'), stringIDToTypeID('solidFill'), so);
+        desc.putObject(charIDToTypeID('T   '), stringIDToTypeID('layerEffects'), fx);
+
+        executeAction(charIDToTypeID('setd'), desc, DialogModes.NO);
+    }
+
     // --- core: resolve path flexibly ---
     function resolvePathFlexible(startDoc, path){
         var parts = toParts(path);
@@ -304,6 +349,64 @@ export_psd_configurable_fixed.jsx (unified traversal with full reporting)
             reason: null
         };
     }
+
+
+    // ===== Smart font helpers =====
+    function __uniquePush(arr, v){ for (var i=0;i<arr.length;i++) if (arr[i]===v) return; arr.push(v); }
+
+    function __buildFontCandidates(userFont) {
+        var base = String(userFont || '').trim();
+        var cands = [];
+        if (!base) return cands;
+
+        var baseNoSpace = base.replace(/\s+/g, '');
+        var baseDash    = base.replace(/\s+/g, '-');
+        var baseUnder   = base.replace(/\s+/g, '_');
+
+        // 1) đúng như input
+        __uniquePush(cands, base);
+        __uniquePush(cands, baseNoSpace);
+        __uniquePush(cands, baseDash);
+        __uniquePush(cands, baseUnder);
+
+        // 2) các hậu tố style thường gặp
+        var styles = ['Regular', 'Roman', 'Book', 'Normal', 'Medium'];
+        for (var i=0; i<styles.length; i++) {
+            var st = styles[i];
+            __uniquePush(cands, base + '-' + st);
+            __uniquePush(cands, base + '_' + st);
+            __uniquePush(cands, base + ' ' + st);
+            __uniquePush(cands, baseDash + '-' + st);
+            __uniquePush(cands, baseUnder + '_' + st);
+            __uniquePush(cands, baseNoSpace + '-' + st);
+        }
+
+        // 3) vài biến thể phổ biến khác (nhiều font PS dùng PostScript name liền mạch)
+        // Ví dụ: TimesNewRomanPSMT; để dành fallback cuối.
+        __uniquePush(cands, baseNoSpace + 'Regular');
+        __uniquePush(cands, baseNoSpace + '-Regular');
+
+        return cands;
+    }
+
+    function __setFontSmart(textLayer, userFont, logPrefix) {
+        var tried = [];
+        var cands = __buildFontCandidates(userFont);
+
+        for (var i=0; i<cands.length; i++) {
+            var cand = cands[i];
+            try {
+                textLayer.textItem.font = cand; // Photoshop sẽ throw nếu tên không hợp lệ
+                __log((logPrefix||'') + "set font OK -> " + cand);
+                return cand; // thành công
+            } catch (e) {
+                tried.push(cand);
+            }
+        }
+        __log((logPrefix||'') + "set font FAIL. Tried: " + tried.join(', '));
+        return null; // không đặt được
+    }
+
 
     ////////////////////////////
     // Main
@@ -419,41 +522,81 @@ export_psd_configurable_fixed.jsx (unified traversal with full reporting)
             }
 
             // ===== TEXT_REPLACE =====
-            else if(t==="text_replace"){
-                if(!act.layerName || typeof act.text==="undefined"){ 
+            else if (t === "text_replace") {
+                if (!act.layerName || typeof act.text === "undefined") {
                     __pushParamError(ai, t, "Missing layerName or text", {
                         groupPath: act.groupPath || "",
                         layerName: act.layerName || "",
                         hasText: typeof act.text !== "undefined"
-                    }); 
-                    continue; 
+                    });
+                    continue;
                 }
 
-                var ret2=resolvePathFlexible(app.activeDocument, act.groupPath||"");
-                
-                if(!ret2.ok){ 
+                var ret2 = resolvePathFlexible(app.activeDocument, act.groupPath || "");
+                if (!ret2.ok) {
                     __log("text_replace: FAIL - " + ret2.reason);
-                    __push_unique(__report.missingGroupPaths, String(act.groupPath||"")); 
-                    closeSOChain(ret2.openedDocs, false); 
-                    continue; 
+                    __push_unique(__report.missingGroupPaths, String(act.groupPath || ""));
+                    closeSOChain(ret2.openedDocs, false);
+                    continue;
                 }
-                
-                var target=ret2.scope;
+
+                var target = ret2.scope;
                 __log("text_replace: searching for layer '" + act.layerName + "' in scope '" + target.name + "'");
-                
-                var tl=findArtLayerByName(target, act.layerName, true);
-                
-                if(tl && typeof tl.textItem!=="undefined"){ 
+
+                var tl = findArtLayerByName(target, act.layerName, true);
+
+                if (tl && typeof tl.textItem !== "undefined") {
+                    // 1) Đổi nội dung
                     __log("text_replace: found text layer, setting text to '" + act.text + "'");
-                    tl.textItem.contents=String(act.text); 
-                    closeSOChain(ret2.openedDocs, true); 
-                } else { 
+                    tl.textItem.contents = String(act.text);
+
+                    // 2) (Optional) Đổi font nếu có
+                    if (act.font) {
+                        var okFont = __setFontSmart(tl, String(act.font), "text_replace: ");
+                        if (!okFont) {
+                            // Không fail job, chỉ log cảnh báo để bạn biết font không match
+                            __pushParamError(ai, t, "Cannot resolve font name", { requested: String(act.font) });
+                        }
+                    }
+
+                    // 3) (Optional) Đổi màu
+                    //    - luôn set text color (an toàn)
+                    //    - và mặc định set Color Overlay (designer hay dùng FX). Có thể điều khiển qua act.apply:
+                    //        + "overlay" hoặc true  => chỉ/ưu tiên overlay
+                    //        + "text"               => chỉ đổi text color
+                    //        + undefined            => set cả text color và overlay
+                    if (act.color) {
+                        var hex = String(act.color);
+                        var mode = (typeof act.apply === "undefined") ? "both" : String(act.apply);
+
+                        try {
+                            if (mode === "text" || mode === "both") {
+                                __setTextColorHex(tl, hex);
+                                __log("text_replace: set text color -> " + hex);
+                            }
+                        } catch (e1) {
+                            __log("text_replace: WARN cannot set text color: " + e1);
+                        }
+
+                        try {
+                            if (mode === "overlay" || mode === "both" || mode === "true") {
+                                app.activeDocument.activeLayer = tl; // target layer
+                                __setColorOverlayHex(hex, 100);
+                                __log("text_replace: set Color Overlay -> " + hex);
+                            }
+                        } catch (e2) {
+                            __log("text_replace: WARN cannot set Color Overlay: " + e2);
+                        }
+                    }
+
+                    closeSOChain(ret2.openedDocs, true);
+                } else {
                     __log("text_replace: text layer '" + act.layerName + "' NOT FOUND or not text");
                     __report.missingTextTargets.push({
-                        groupPath: String(act.groupPath||""),
+                        groupPath: String(act.groupPath || ""),
                         layerName: String(act.layerName)
-                    }); 
-                    closeSOChain(ret2.openedDocs, false); 
+                    });
+                    closeSOChain(ret2.openedDocs, false);
                 }
             }
 

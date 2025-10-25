@@ -141,7 +141,7 @@ def _run_photoshop(order_id: str, psd_filename: str, actions: list):
         try:
             with open(result_path, "r", encoding="utf-8") as rf:
                 report_data = json.load(rf)
-            _log("[INFO] Parsed report JSON successfully.")
+            # _log("[INFO] Parsed report JSON successfully.")
         except Exception as re:
             _log(f"[WARN] Cannot read/parse report JSON: {re}")
 
@@ -218,7 +218,7 @@ def process_design_job(payload: dict):
 
     try:
         result = _run_photoshop(order_id, psd_file, actions)
-        _log(f"[DONE] process_design_job finished with status: {result.get('status')}")
+        # _log(f"[DONE] process_design_job finished with status: {result.get('status')}")
         if job:
             job.meta["progress"] = "finished"
             job.save_meta()
