@@ -425,14 +425,22 @@ export_psd_configurable.jsx (unified traversal with full reporting)
     }
 
     function __injectRegularSuffixIfBare(name){
-        var s = String(name || '').trim();
+        // 1) bỏ hết khoảng trắng trước
+        var s = __stripSpaces(String(name || ''));
         if (!s) return s;
-        // nếu đã có hậu tố style thì giữ nguyên
-        if (/[-_ ](Regular|Roman|Book|Normal|Medium|Bold|Italic)$/i.test(s)) return s;
-        // nếu đã có dấu '-' nhưng không phải Regular thì vẫn giữ nguyên (theo yêu cầu tạm chỉ test -Regular)
+
+        // 2) nếu đã có style ở cuối thì giữ nguyên
+        if (/(Regular|Roman|Book|Normal|Medium|Bold|Italic)$/i.test(s)) return s;
+
+        // 3) nếu đã có dấu '-' (tức đã có hậu tố/biến thể gì đó) thì giữ nguyên
         if (/-/.test(s)) return s;
-        // ép thành -Regular
+
+        // 4) mặc định ép thêm -Regular
         return s + '-Regular';
+    }
+
+    function __stripSpaces(s){
+        return String(s||'').replace(/\s+/g, '');
     }
 
 
@@ -580,46 +588,39 @@ export_psd_configurable.jsx (unified traversal with full reporting)
 
                     // 2) (Optional) Đổi font nếu có
                     if (act.font) {
-                        var rawReq = String(act.font);
-                        var coerced = __injectRegularSuffixIfBare(rawReq); // ép -Regular nếu cần
-                        if (coerced !== rawReq) {
-                            __log("text_replace: coerced font '" + rawReq + "' -> '" + coerced + "'");
-                        }
-
-                        // Ưu tiên thử dạng -Regular trước (kể cả khi user đưa sẵn -Regular)
-                        function __buildFontCandidates_RegularFirst(userFont) {
-                            var base = String(userFont || '').trim();
+                        var rawReq      = String(act.font);
+                        var baseNoSpace = String(rawReq).replace(/\s+/g, ''); // bỏ khoảng cách TRƯỚC
+                        // Danh sách candidate: ưu tiên BARE trước, rồi mới -Regular
+                        function __buildFontCandidates_BareThenRegular(base) {
                             var arr = [];
-                            if (!base) return arr;
+                            function push(u){ for (var i=0;i<arr.length;i++) if (arr[i]===u) return; arr.push(u); }
 
-                            // ưu tiên chính xác (sau khi đã ép -Regular)
-                            __uniquePush(arr, base);
+                            var b = base;
+                            var bLower = b.toLowerCase();
+                            var bDash  = b.replace(/\s+/g,'-'); // thực ra đã no-space, giữ cho đầy đủ
+                            var bUnd   = b.replace(/\s+/g,'_');
 
-                            // thêm vài biến thể tương đương cho PostScript name
-                            var bNo = base.replace(/\s+/g, '');
-                            var bDash = base.replace(/\s+/g, '-');
-                            var bUnd  = base.replace(/\s+/g, '_');
+                            // 1) BARE trước (không hậu tố)
+                            push(b);
+                            push(bLower);
+                            push(bDash);
+                            push(bUnd);
 
-                            __uniquePush(arr, bDash);
-                            __uniquePush(arr, bUnd);
-                            __uniquePush(arr, bNo);
+                            // 2) -Regular sau
+                            push(b + '-Regular');
+                            push(b + '_Regular');
+                            push(b + 'Regular'); // phòng trường hợp PS name dính liền
 
-                            // Nếu người dùng nhập “Acme” thì ở đây base đã thành “Acme-Regular”
-                            // thử thêm các biến thể thường gặp
-                            var alt = [
-                                base.replace(/-Regular$/i, '_Regular'),
-                                base.replace(/-Regular$/i, ' Regular'),
-                                bNo + '-Regular',
-                                bNo + '_Regular'
-                            ];
-                            for (var i=0; i<alt.length; i++) __uniquePush(arr, alt[i]);
+                            // 3) biến thể thường gặp
+                            push(bLower + '-regular');
+                            push(bLower + '_regular');
+                            push(bLower + 'regular');
 
                             return arr;
                         }
 
-                        // Dùng candidate list ưu tiên -Regular
                         var tried = [];
-                        var cands = __buildFontCandidates_RegularFirst(coerced);
+                        var cands = __buildFontCandidates_BareThenRegular(baseNoSpace);
                         var okFont = null;
                         for (var ci=0; ci<cands.length; ci++){
                             var cand = cands[ci];
@@ -632,9 +633,10 @@ export_psd_configurable.jsx (unified traversal with full reporting)
                         }
                         if (!okFont) {
                             __log("text_replace: set font FAIL. Tried: " + tried.join(', '));
-                            __pushParamError(ai, t, "Cannot resolve font name", { requested: rawReq, coerced: coerced });
+                            __pushParamError(ai, t, "Cannot resolve font name", { requested: rawReq, normalized: baseNoSpace });
                         }
                     }
+
 
 
                     // 3) (Optional) Đổi màu
