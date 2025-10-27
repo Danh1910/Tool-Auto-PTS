@@ -362,32 +362,49 @@ export_psd_configurable.jsx (unified traversal with full reporting)
         var baseNoSpace = base.replace(/\s+/g, '');
         var baseDash    = base.replace(/\s+/g, '-');
         var baseUnder   = base.replace(/\s+/g, '_');
+        var baseLow     = base.toLowerCase();
 
-        // 1) đúng như input
+        // chính xác & dạng đơn giản
         __uniquePush(cands, base);
         __uniquePush(cands, baseNoSpace);
         __uniquePush(cands, baseDash);
         __uniquePush(cands, baseUnder);
+        __uniquePush(cands, baseLow);
+        __uniquePush(cands, baseLow.replace(/\s+/g, ''));
 
-        // 2) các hậu tố style thường gặp
         var styles = ['Regular', 'Roman', 'Book', 'Normal', 'Medium'];
         for (var i=0; i<styles.length; i++) {
             var st = styles[i];
-            __uniquePush(cands, base + '-' + st);
-            __uniquePush(cands, base + '_' + st);
-            __uniquePush(cands, base + ' ' + st);
-            __uniquePush(cands, baseDash + '-' + st);
-            __uniquePush(cands, baseUnder + '_' + st);
-            __uniquePush(cands, baseNoSpace + '-' + st);
+
+            var suffixes = [
+                '-' + st,
+                '_' + st,
+                ' ' + st,
+                '-' + st.toLowerCase(),
+                '_' + st.toLowerCase()
+            ];
+
+            for (var j=0; j<suffixes.length; j++) {
+                var suf = suffixes[j];
+                __uniquePush(cands, base + suf);
+                __uniquePush(cands, baseNoSpace + suf);
+                __uniquePush(cands, baseDash + suf);
+                __uniquePush(cands, baseUnder + suf);
+
+                // Thêm kiểu double (Acme_Regular-Regular)
+                __uniquePush(cands, baseUnder + '_Regular');
+                __uniquePush(cands, baseUnder + '-Regular');
+            }
         }
 
-        // 3) vài biến thể phổ biến khác (nhiều font PS dùng PostScript name liền mạch)
-        // Ví dụ: TimesNewRomanPSMT; để dành fallback cuối.
+        // fallback cuối: kiểu PS name liền mạch
         __uniquePush(cands, baseNoSpace + 'Regular');
         __uniquePush(cands, baseNoSpace + '-Regular');
+        __uniquePush(cands, baseNoSpace + '_Regular');
 
         return cands;
     }
+
 
     function __setFontSmart(textLayer, userFont, logPrefix) {
         var tried = [];
@@ -405,6 +422,17 @@ export_psd_configurable.jsx (unified traversal with full reporting)
         }
         __log((logPrefix||'') + "set font FAIL. Tried: " + tried.join(', '));
         return null; // không đặt được
+    }
+
+    function __injectRegularSuffixIfBare(name){
+        var s = String(name || '').trim();
+        if (!s) return s;
+        // nếu đã có hậu tố style thì giữ nguyên
+        if (/[-_ ](Regular|Roman|Book|Normal|Medium|Bold|Italic)$/i.test(s)) return s;
+        // nếu đã có dấu '-' nhưng không phải Regular thì vẫn giữ nguyên (theo yêu cầu tạm chỉ test -Regular)
+        if (/-/.test(s)) return s;
+        // ép thành -Regular
+        return s + '-Regular';
     }
 
 
@@ -552,12 +580,62 @@ export_psd_configurable.jsx (unified traversal with full reporting)
 
                     // 2) (Optional) Đổi font nếu có
                     if (act.font) {
-                        var okFont = __setFontSmart(tl, String(act.font), "text_replace: ");
+                        var rawReq = String(act.font);
+                        var coerced = __injectRegularSuffixIfBare(rawReq); // ép -Regular nếu cần
+                        if (coerced !== rawReq) {
+                            __log("text_replace: coerced font '" + rawReq + "' -> '" + coerced + "'");
+                        }
+
+                        // Ưu tiên thử dạng -Regular trước (kể cả khi user đưa sẵn -Regular)
+                        function __buildFontCandidates_RegularFirst(userFont) {
+                            var base = String(userFont || '').trim();
+                            var arr = [];
+                            if (!base) return arr;
+
+                            // ưu tiên chính xác (sau khi đã ép -Regular)
+                            __uniquePush(arr, base);
+
+                            // thêm vài biến thể tương đương cho PostScript name
+                            var bNo = base.replace(/\s+/g, '');
+                            var bDash = base.replace(/\s+/g, '-');
+                            var bUnd  = base.replace(/\s+/g, '_');
+
+                            __uniquePush(arr, bDash);
+                            __uniquePush(arr, bUnd);
+                            __uniquePush(arr, bNo);
+
+                            // Nếu người dùng nhập “Acme” thì ở đây base đã thành “Acme-Regular”
+                            // thử thêm các biến thể thường gặp
+                            var alt = [
+                                base.replace(/-Regular$/i, '_Regular'),
+                                base.replace(/-Regular$/i, ' Regular'),
+                                bNo + '-Regular',
+                                bNo + '_Regular'
+                            ];
+                            for (var i=0; i<alt.length; i++) __uniquePush(arr, alt[i]);
+
+                            return arr;
+                        }
+
+                        // Dùng candidate list ưu tiên -Regular
+                        var tried = [];
+                        var cands = __buildFontCandidates_RegularFirst(coerced);
+                        var okFont = null;
+                        for (var ci=0; ci<cands.length; ci++){
+                            var cand = cands[ci];
+                            try {
+                                tl.textItem.font = cand;
+                                __log("text_replace: set font OK -> " + cand);
+                                okFont = cand;
+                                break;
+                            } catch (e) { tried.push(cand); }
+                        }
                         if (!okFont) {
-                            // Không fail job, chỉ log cảnh báo để bạn biết font không match
-                            __pushParamError(ai, t, "Cannot resolve font name", { requested: String(act.font) });
+                            __log("text_replace: set font FAIL. Tried: " + tried.join(', '));
+                            __pushParamError(ai, t, "Cannot resolve font name", { requested: rawReq, coerced: coerced });
                         }
                     }
+
 
                     // 3) (Optional) Đổi màu
                     //    - luôn set text color (an toàn)
