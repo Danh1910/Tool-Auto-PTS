@@ -1,12 +1,14 @@
 # tasks.py
-import os, sys, json, subprocess, traceback, time
+import os, sys, json, subprocess, traceback, time, re, tempfile
 from datetime import datetime
 from rq import get_current_job
+from urllib.parse import urlparse
 import urllib.request
 import urllib.error
 import urllib.parse
+import requests
 
-from google_drive_service import upload_to_drive  # module upload Google Drive của bạn
+from google_drive_service import upload_to_drive, upload_to_drive_advanced  # advanced uploader
 
 # --- Cấu hình local ---
 PSD_FOLDER    = r"C:\Users\MSI\Design_PSD"
@@ -51,6 +53,11 @@ def _split_item_id(order_id: str):
     except Exception:
         return None
 
+def _sanitize_folder_name(name: str) -> str:
+    # chỉ cho phép chữ/số, '-', '_', '.', ' '
+    name = re.sub(r'[^0-9A-Za-z\-\._ ]+', '_', str(name))
+    return name or "order"
+
 # =========================
 # HTTP callback
 # =========================
@@ -69,7 +76,7 @@ def _post_json(url: str, payload: dict, timeout=10, headers=None):
 
 def _post_json_with_retry(url: str, payload: dict, tries=3, delay=2):
     last = None
-    for i in range(tries):
+    for _ in range(tries):
         ok, resp = _post_json(url, payload, timeout=10)
         if ok:
             return True, resp
@@ -78,7 +85,7 @@ def _post_json_with_retry(url: str, payload: dict, tries=3, delay=2):
     return False, last
 
 # =========================
-# Photoshop runner
+# Photoshop runner (render only)
 # =========================
 def _run_photoshop(order_id: str, psd_filename: str, actions: list):
     job = _get_job()
@@ -97,7 +104,7 @@ def _run_photoshop(order_id: str, psd_filename: str, actions: list):
         "actions": actions
     }
 
-    # file tạm theo job_id để không đè nhau
+    # file tạm (dùng tên cố định hoặc tùy bạn nhân bản theo job_id)
     cwd         = os.getcwd()
     config_path = os.path.join(cwd, "psd_config.json")
     result_path = os.path.join(cwd, "psd_result.json")
@@ -111,7 +118,7 @@ def _run_photoshop(order_id: str, psd_filename: str, actions: list):
     _log(f"Report JSON will be at: {result_path}")
     _log("Payload sent to Photoshop:\n" + json.dumps(final_payload, indent=2, ensure_ascii=False))
 
-    # Ưu tiên dùng python hiện tại + đường dẫn tuyệt đối run_ps_script.py để tránh PATH issues
+    # Ưu tiên dùng python hiện tại + đường dẫn tuyệt đối run_ps_script.py
     script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "run_ps_script.py"))
     python_exe  = sys.executable or "py"
     cmd = [python_exe, script_path, config_path, result_path, log_path]
@@ -141,9 +148,8 @@ def _run_photoshop(order_id: str, psd_filename: str, actions: list):
         try:
             with open(result_path, "r", encoding="utf-8") as rf:
                 report_data = json.load(rf)
-            # _log("[INFO] Parsed report JSON successfully.")
-        except Exception as re:
-            _log(f"[WARN] Cannot read/parse report JSON: {re}")
+        except Exception as e:
+            _log(f"[WARN] Cannot read/parse report JSON: {e}")
 
     def _has_missing(report: dict) -> bool:
         if not isinstance(report, dict):
@@ -176,14 +182,10 @@ def _run_photoshop(order_id: str, psd_filename: str, actions: list):
         _log("[ERROR] Output image not found (export may have failed).")
         return {"status":"error","message":"Output image not found (export may have failed)","report": report_data or {}}
 
-    # Upload Drive + log link
-    drive_link = upload_to_drive(output_path, output_filename, parent_folder_id=FOLDER_ID, use_date_subfolder=True)
-    _log(f"[UPLOAD] File uploaded to Drive: {drive_link}")
-
+    # Trả về LOCAL PATH để tầng trên tự xử lý upload
     return {
         "status":"success",
         "message":"PSD processed successfully",
-        "outputPath": drive_link,
         "outputLocalPath": output_path,
         "report": report_data or {}
     }
@@ -193,7 +195,12 @@ def _run_photoshop(order_id: str, psd_filename: str, actions: list):
 # =========================
 def process_design_job(payload: dict):
     """
-    payload: {"order_id": "...", "template": "xxx.psd", "actions":[...]}
+    payload: {
+      "order_id": "...",
+      "template": "xxx.psd",
+      "actions":[...],
+      "main_image_url": "https://..."   # optional
+    }
     -> Khi xong sẽ tự callback về PHP theo DEFAULT_CALLBACK_URL (hardcode).
     """
     job = _get_job()
@@ -204,11 +211,14 @@ def process_design_job(payload: dict):
     order_id = payload.get("order_id")
     psd_file = payload.get("template")
     actions  = payload.get("actions", [])
+    main_image_url = (payload.get("main_image_url") or "").strip()
+    # chỉ lấy phần trước dấu "_" để đặt tên thư mục
+    pure_order = str(order_id).split("_", 1)[0] if order_id else "order"
+    order_folder_name = _sanitize_folder_name(pure_order)
 
     if not order_id or not psd_file or not isinstance(actions, list):
         _log("[ERROR] Invalid payload for process_design_job.")
-        # callback luôn để PHP cập nhật error
-        _callback(order_id, status="error", drive_url=None, message="Invalid payload")
+        _callback(order_id, status="error", drive_url=None, message="Invalid payload", report=None)
         return {"status":"error","message":"Invalid payload"}
 
     _log(f"Start process_design_job | job_id={job.get_id() if job else 'N/A'} | order_id={order_id} | template={psd_file}")
@@ -218,20 +228,98 @@ def process_design_job(payload: dict):
 
     try:
         result = _run_photoshop(order_id, psd_file, actions)
-        # _log(f"[DONE] process_design_job finished with status: {result.get('status')}")
+
+        status = result.get("status")
+        report = result.get("report") or {}
+        local_path = result.get("outputLocalPath")
+
+        if status != "success" or not local_path or not os.path.exists(local_path):
+            if job:
+                job.meta["progress"] = "failed"
+                job.save_meta()
+            _callback(order_id, status=status or "error", drive_url=None, message=result.get("message"), report=report)
+            return result
+
+        # ==== UPLOAD THEO 2 NHÁNH ====
+        upload_info = {"design_link": None, "mockup_link": None, "folder_link": None}
+
+        if not main_image_url:
+            # === Hành vi CŨ: upload 1 file vào /DATE/ ===
+            drive_link = upload_to_drive(
+                local_path,
+                os.path.basename(local_path),
+                parent_folder_id=FOLDER_ID,
+                use_date_subfolder=True
+            )
+            upload_info["design_link"] = drive_link
+        else:
+            # === Hành vi MỚI: tạo /DATE/<order_id>/ và up cả 2 file ===
+            # 1) upload ảnh PTS
+            up1 = upload_to_drive_advanced(
+                file_path=local_path,
+                filename=os.path.basename(local_path),
+                parent_folder_id=FOLDER_ID,
+                use_date_subfolder=True,
+                order_subfolder=order_folder_name,
+                make_public_link=False,
+                return_folder_link=True,
+            )
+            upload_info["design_link"] = up1["webViewLink"]
+            upload_info["folder_link"] = up1.get("folderWebLink")
+
+            # 2) tải mockup và upload
+            downloaded_mockup_path = None
+            try:
+                parsed = urlparse(main_image_url)
+                base = os.path.basename(parsed.path) or "mockup.jpg"
+                if not re.search(r'\.(jpe?g|png)$', base, re.IGNORECASE):
+                    base = "mockup.jpg"
+
+                tmpdir = tempfile.gettempdir()
+                downloaded_mockup_path = os.path.join(tmpdir, f"{order_folder_name}__{base}")
+
+                r = requests.get(main_image_url, timeout=20)
+                r.raise_for_status()
+                with open(downloaded_mockup_path, "wb") as f:
+                    f.write(r.content)
+
+                up2 = upload_to_drive_advanced(
+                    file_path=downloaded_mockup_path,
+                    filename=os.path.basename(downloaded_mockup_path),
+                    parent_folder_id=FOLDER_ID,
+                    use_date_subfolder=True,
+                    order_subfolder=order_folder_name,
+                    make_public_link=False,
+                    return_folder_link=False,
+                )
+                upload_info["mockup_link"] = up2["webViewLink"]
+            except Exception as de:
+                _log(f"[MOCKUP][WARN] Cannot download/upload mockup: {de}")
+                upload_info["mockup_link"] = None
+
         if job:
             job.meta["progress"] = "finished"
             job.save_meta()
 
-        # callback thành công/hoặc báo lỗi theo result
+        # callback (giữ tương thích key cũ 'drive_url')
         _callback(
             order_id,
-            status=result.get("status"),
-            drive_url=result.get("outputPath"),
-            message=result.get("message"),
-            report=result.get("report")
+            status="success",
+            drive_url=upload_info["design_link"],
+            message="PSD processed successfully",
+            report=report
         )
-        return result
+
+        # trả về result phong phú cho /jobs/<id>
+        result_out = {
+            "status": "success",
+            "message": "PSD processed successfully",
+            "outputPath": upload_info["design_link"],
+            "mockupPath": upload_info["mockup_link"],
+            "folderPath": upload_info["folder_link"],
+            "report": report
+        }
+        return result_out
 
     except Exception as e:
         msg = "".join(traceback.format_exception_only(type(e), e)).strip()
@@ -240,8 +328,7 @@ def process_design_job(payload: dict):
             job.meta["progress"] = "failed"
             job.meta["error"] = str(e)
             job.save_meta()
-        # callback báo lỗi
-        _callback(order_id, status="error", drive_url=None, message=str(e))
+        _callback(order_id, status="error", drive_url=None, message=str(e), report=None)
         return {"status":"error","message":str(e)}
 
 def _callback(order_id: str, status: str, drive_url: str | None, message: str | None,  report: dict | None):
@@ -270,6 +357,5 @@ def _callback(order_id: str, status: str, drive_url: str | None, message: str | 
 # =========================
 def say_hello(name):
     _log(f"Hello {name}")
-    # cũng callback demo (không bắt buộc)
-    _callback(order_id=f"TEST_{int(time.time())}", status="success", drive_url="https://example.com/demo", message=f"Hello {name}")
+    _callback(order_id=f"TEST_{int(time.time())}", status="success", drive_url="https://example.com/demo", message=f"Hello {name}", report=None)
     return f"Hello {name}"

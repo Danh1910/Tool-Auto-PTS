@@ -134,3 +134,81 @@ def upload_to_drive(
         print(f"[UPLOAD] File uploaded to Drive (parent:{parent_folder_id}): {uploaded_file['webViewLink']}")
 
     return uploaded_file['webViewLink']
+
+
+def _get_folder_weblink(folder_id: str) -> str:
+    # Link xem/thư mục trên Drive
+    return f"https://drive.google.com/drive/folders/{folder_id}"
+
+def _ensure_nested_folders(service, root_parent_id: str, names: list[str]) -> str:
+    """
+    Tạo/kiếm chuỗi thư mục lồng nhau dưới root_parent_id theo thứ tự names.
+    Trả về folder_id cuối cùng.
+    """
+    current_parent = root_parent_id
+    for name in names:
+        # tái sử dụng logic _find_or_create_drive_folder
+        current_parent = _find_or_create_drive_folder(service, current_parent, name)
+    return current_parent
+
+def upload_to_drive_advanced(
+    file_path: str,
+    filename: str,
+    parent_folder_id: str,
+    *,
+    use_date_subfolder: bool = True,
+    order_subfolder: str | None = None,
+    token_path: str = "token.json",
+    credentials_path: str = "credentials.json",
+    make_public_link: bool = False,
+    return_folder_link: bool = False,
+) -> dict:
+    """
+    Nâng cấp: cho phép upload theo đường dẫn: parent/(DATE)/(ORDER_ID)/filename
+    Trả về dict: {"id": ..., "webViewLink": ..., "folderId": ..., "folderWebLink": ... (nếu yêu cầu)}
+    """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File không tồn tại: {file_path}")
+
+    service = get_drive_service(token_path=token_path, credentials_path=credentials_path)
+
+    subfolders = []
+    if use_date_subfolder:
+        subfolders.append(_today_str_vn())
+    if order_subfolder:
+        subfolders.append(order_subfolder)
+
+    # Tạo đường dẫn lồng nếu cần
+    target_parent_id = parent_folder_id
+    if subfolders:
+        target_parent_id = _ensure_nested_folders(service, parent_folder_id, subfolders)
+
+    file_metadata = {
+        'name': filename,
+        'parents': [target_parent_id]
+    }
+    media = MediaFileUpload(file_path, mimetype='image/jpeg')
+    uploaded = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields='id, webViewLink, parents'
+    ).execute()
+
+    # Nếu muốn public link (optional)
+    if make_public_link:
+        service.permissions().create(
+            fileId=uploaded['id'],
+            body={'type': 'anyone', 'role': 'reader'},
+            fields='id'
+        ).execute()
+        # lấy lại webViewLink để đảm bảo
+        uploaded = service.files().get(fileId=uploaded['id'], fields='id, webViewLink, parents').execute()
+
+    out = {
+        "id": uploaded["id"],
+        "webViewLink": uploaded["webViewLink"],
+        "folderId": target_parent_id,
+    }
+    if return_folder_link:
+        out["folderWebLink"] = _get_folder_weblink(target_parent_id)
+    return out

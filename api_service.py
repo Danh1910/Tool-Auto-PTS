@@ -6,7 +6,8 @@ import json
 from datetime import datetime
 
 # >>> import module Drive đã tách
-from google_drive_service import upload_to_drive
+from google_drive_service import upload_to_drive, upload_to_drive_advanced
+
 
 from rq import Queue
 from redis import Redis
@@ -15,6 +16,10 @@ from rq.job import Job
 from tasks import process_design_job  # task đã viết trong worker
 from rq import Retry   # ✅ thêm import
 
+import re
+import tempfile
+import requests
+from urllib.parse import urlparse
 
 # Kết nối Redis (đổi host/password theo setup của bạn)
 # KẾT NỐI KHÔNG MẬT KHẨU
@@ -26,6 +31,14 @@ FOLDER_ID = "1vxaF4JhdHq33w00zBRpYgCqIVeIpYYkX"  # Thư mục Drive gốc
 
 app = Flask(__name__)
 
+def _sanitize_folder_name(name: str) -> str:
+    # Loại ký tự không hợp lệ cho tên Drive/folder
+    # (giữ lại chữ, số, '-', '_', '.', ' ')
+    name = re.sub(r'[^0-9A-Za-z\-\._ ]+', '_', str(name))
+    # tránh tên rỗng
+    return name or "order"
+
+
 @app.route("/generate", methods=["POST"])
 def generate_design():
     try:
@@ -36,12 +49,18 @@ def generate_design():
         order_id = data.get("order_id")
         psd_filename = data.get("template")  # tên file psd
         actions = data.get("actions")
+        main_image_url = (data.get("main_image_url") or "").strip()
+
 
         if not order_id or not psd_filename or not isinstance(actions, list):
             return jsonify({
                 "status": "error",
                 "message": "Invalid payload: thiếu order_id, template hoặc actions."
             }), 400
+        
+        order_folder_name = _sanitize_folder_name(order_id)
+        downloaded_mockup_path = None
+
 
         # --- Các giá trị cố định ---
         psd_folder = r"C:\Users\MSI\Design_PSD"
@@ -90,8 +109,8 @@ def generate_design():
             try:
                 with open(result_path, "r", encoding="utf-8") as rf:
                     report_data = json.load(rf)
-            except Exception as re:
-                print("[WARN] Cannot read/parse report JSON:", re)
+            except Exception as e:
+                print("[WARN] Cannot read/parse report JSON:", e)
 
         def _has_missing(report: dict) -> bool:
             if not isinstance(report, dict):
@@ -130,23 +149,87 @@ def generate_design():
                 "message": "Output image not found (export may have failed)",
                 "report": report_data or {}
             }), 200
+        
+        # Nếu có main_image_url -> tải mockup về (safe timeout)
+        if main_image_url:
+            try:
+                # Lấy tên file từ URL (nếu có phần mở rộng)
+                parsed = urlparse(main_image_url)
+                base = os.path.basename(parsed.path) or "mockup.jpg"
+                # đảm bảo có .jpg/.jpeg/.png; nếu không thì gán .jpg
+                if not re.search(r'\.(jpe?g|png)$', base, re.IGNORECASE):
+                    base = "mockup.jpg"
+
+                # tải về thư mục tạm
+                tmpdir = tempfile.gettempdir()
+                downloaded_mockup_path = os.path.join(tmpdir, f"{order_folder_name}__{base}")
+
+                r = requests.get(main_image_url, timeout=20)
+                r.raise_for_status()
+                with open(downloaded_mockup_path, "wb") as f:
+                    f.write(r.content)
+
+                print(f"[MOCKUP] Downloaded to: {downloaded_mockup_path}")
+            except Exception as de:
+                print(f"[MOCKUP][WARN] Cannot download mockup from URL: {main_image_url} -> {de}")
+                downloaded_mockup_path = None
+
 
         # 👉 Gọi hàm upload của module đã tách
-        drive_link = upload_to_drive(
-            output_path,
-            output_filename,
-            parent_folder_id=FOLDER_ID,
-            use_date_subfolder=True,
-            # token_path="token.json",           # có thể truyền path tuỳ biến
-            # credentials_path="credentials.json"
-        )
+        if not main_image_url:
+            # === Giữ NGUYÊN hành vi cũ ===
+            drive_link = upload_to_drive(
+                output_path,
+                output_filename,
+                parent_folder_id=FOLDER_ID,
+                use_date_subfolder=True,
+            )
+            return jsonify({
+                "status": "success",
+                "message": "PSD processed successfully",
+                "outputPath": drive_link,
+                "report": report_data or {}
+            })
+        else:
+            # === Hành vi MỚI khi có main_image_url ===
+            # Upload ảnh PTS và mockup (nếu tải được) vào: /<DATE>/<ORDER_ID>/
+            upload_info = {}
 
-        return jsonify({
-            "status": "success",
-            "message": "PSD processed successfully",
-            "outputPath": drive_link,
-            "report": report_data or {}
-        })
+            up1 = upload_to_drive_advanced(
+                file_path=output_path,
+                filename=output_filename,
+                parent_folder_id=FOLDER_ID,
+                use_date_subfolder=True,
+                order_subfolder=order_folder_name,
+                make_public_link=False,  # giữ nguyên phạm vi theo token
+                return_folder_link=True, # trả thêm link folder
+            )
+            upload_info["design_link"] = up1["webViewLink"]
+            upload_info["folder_link"] = up1.get("folderWebLink")
+
+            if downloaded_mockup_path and os.path.exists(downloaded_mockup_path):
+                mockup_name = os.path.basename(downloaded_mockup_path)
+                up2 = upload_to_drive_advanced(
+                    file_path=downloaded_mockup_path,
+                    filename=mockup_name,
+                    parent_folder_id=FOLDER_ID,
+                    use_date_subfolder=True,
+                    order_subfolder=order_folder_name,
+                    make_public_link=False,
+                    # không cần lấy lại folder_link lần 2
+                )
+                upload_info["mockup_link"] = up2["webViewLink"]
+            else:
+                upload_info["mockup_link"] = None
+
+            return jsonify({
+                "status": "success",
+                "message": "PSD processed successfully",
+                "outputPath": upload_info["design_link"],
+                "mockupPath": upload_info["mockup_link"],
+                "folderPath": upload_info["folder_link"],
+                "report": report_data or {}
+            })
 
     except Exception as e:
         print(f"[EXCEPTION] {e}")

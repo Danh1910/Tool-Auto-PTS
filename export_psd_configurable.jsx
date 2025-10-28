@@ -588,54 +588,106 @@ export_psd_configurable.jsx (unified traversal with full reporting)
 
                     // 2) (Optional) Đổi font nếu có
                     if (act.font) {
-                        var rawReq      = String(act.font);
-                        var baseNoSpace = String(rawReq).replace(/\s+/g, ''); // bỏ khoảng cách TRƯỚC
-                        // Danh sách candidate: ưu tiên BARE trước, rồi mới -Regular
-                        function __buildFontCandidates_BareThenRegular(base) {
+                        var rawReq = String(act.font);
+
+                        // Chuẩn hoá tên để so family: bỏ khoảng trắng / gạch / ký tự không chữ số
+                        function __fontKey(s){
+                            return String(s || "")
+                                .toLowerCase()
+                                .replace(/regular|roman|book|normal|medium|bold|italic/g, "") // bỏ style từ khoá
+                                .replace(/[^a-z0-9]/g, ""); // bỏ mọi thứ còn lại
+                        }
+
+                        // Build candidates: ƯU TIÊN -Regular trước, sau đó tới bare
+                        function __buildFontCandidates_RegularThenBare(base) {
                             var arr = [];
                             function push(u){ for (var i=0;i<arr.length;i++) if (arr[i]===u) return; arr.push(u); }
 
-                            var b = base;
-                            var bLower = b.toLowerCase();
-                            var bDash  = b.replace(/\s+/g,'-'); // thực ra đã no-space, giữ cho đầy đủ
-                            var bUnd   = b.replace(/\s+/g,'_');
+                            var b       = String(base || '');
+                            var bTrim   = b.replace(/^\s+|\s+$/g,'');
+                            var bNoSp   = bTrim.replace(/\s+/g,'');
+                            var bDash   = bTrim.replace(/\s+/g,'-');
+                            var bUnder  = bTrim.replace(/\s+/g,'_');
+                            var bLower  = bTrim.toLowerCase();
+                            var bLowerNo= bLower.replace(/\s+/g,'');
 
-                            // 1) BARE trước (không hậu tố)
-                            push(b);
-                            push(bLower);
-                            push(bDash);
-                            push(bUnd);
+                            // 1) Regular-first (đủ biến thể)
+                            push(bTrim + '-Regular');
+                            push(bTrim + '_Regular');
+                            push(bTrim + 'Regular');
 
-                            // 2) -Regular sau
-                            push(b + '-Regular');
-                            push(b + '_Regular');
-                            push(b + 'Regular'); // phòng trường hợp PS name dính liền
+                            push(bNoSp + '-Regular');
+                            push(bNoSp + '_Regular');
+                            push(bNoSp + 'Regular');
 
-                            // 3) biến thể thường gặp
+                            push(bDash + '-Regular');
+                            push(bUnder + '_Regular');
+
                             push(bLower + '-regular');
                             push(bLower + '_regular');
                             push(bLower + 'regular');
 
+                            push(bLowerNo + '-regular');
+                            push(bLowerNo + '_regular');
+                            push(bLowerNo + 'regular');
+
+                            // 2) Bare (không hậu tố)
+                            push(bTrim);
+                            push(bNoSp);
+                            push(bDash);
+                            push(bUnder);
+                            push(bLower);
+                            push(bLowerNo);
+
+                            // 3) “double” hay gặp (để cuối cùng)
+                            push(bUnder + '_Regular');
+                            push(bUnder + '-Regular');
+
                             return arr;
                         }
 
-                        var tried = [];
-                        var cands = __buildFontCandidates_BareThenRegular(baseNoSpace);
-                        var okFont = null;
+                        // So khớp family: applied phải “giống gốc” sau khi bỏ style/hyphen/space
+                        var baseKey = __fontKey(rawReq);
+
+                        function __tryApplyFont(layer, cand) {
+                            try {
+                                layer.textItem.font = cand; // có thể "set được" nhưng bị map
+                            } catch(e) {
+                                return { ok:false, applied:"", reason:"throw:"+e };
+                            }
+                            var applied = String(layer.textItem.font || "");
+                            var appliedKey = __fontKey(applied);
+
+                            // Chấp nhận khi appliedKey chứa baseKey hoặc khớp hoàn toàn.
+                            // (Dùng contains để cover case PS name thêm foundry prefix/suffix nhẹ.)
+                            var ok = (appliedKey === baseKey) || (appliedKey.indexOf(baseKey) !== -1);
+
+                            return { ok: ok, applied: applied, reason: ok ? "verified" : ("mismatch:"+applied) };
+                        }
+
+                        var tried = [], okFont = null;
+                        var cands = __buildFontCandidates_RegularThenBare(rawReq);
+
+                        __log("text_replace: font candidates order -> " + cands.join(' | '));
+
                         for (var ci=0; ci<cands.length; ci++){
                             var cand = cands[ci];
-                            try {
-                                tl.textItem.font = cand;
-                                __log("text_replace: set font OK -> " + cand);
-                                okFont = cand;
+                            var r = __tryApplyFont(tl, cand);
+                            if (r.ok) {
+                                __log("text_replace: set font OK -> " + cand + " (applied: " + r.applied + ")");
+                                okFont = r.applied || cand;
                                 break;
-                            } catch (e) { tried.push(cand); }
+                            } else {
+                                tried.push(cand + " [" + r.reason + "]");
+                            }
                         }
+
                         if (!okFont) {
                             __log("text_replace: set font FAIL. Tried: " + tried.join(', '));
-                            __pushParamError(ai, t, "Cannot resolve font name", { requested: rawReq, normalized: baseNoSpace });
+                            __pushParamError(ai, t, "Cannot resolve font name", { requested: rawReq });
                         }
                     }
+
 
 
 
