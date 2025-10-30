@@ -1,0 +1,47 @@
+{
+  "product_name": "girl book",
+  "product_path": "\\\\NCNAS\\homes\\daocta\\T10\\POD4 Xmas Ugly Sweatshirt\\mk\\1",
+  "groups": [
+    {
+      "label": "Choose Book",
+      "folder": "book",
+      "thumbnail_dir": "\\\\NCNAS\\homes\\daocta\\T10\\POD4 Xmas Ugly Sweatshirt\\mk\\1\\thumbnail\\girl book\\book",
+      "preview_dir": "\\\\NCNAS\\homes\\daocta\\T10\\POD4 Xmas Ugly Sweatshirt\\mk\\1\\ct\\girl book\\book",
+      "options": [
+        { "order": 1, "name": "book-(1)", "thumbnail": "book-(1).png", "preview": "book-(1).png" },
+        { "order": 2, "name": "book-(2)", "thumbnail": "book-(2).png", "preview": "book-(2).png" },
+        { "order": 3, "name": "book-(3)", "thumbnail": "book-(3).png", "preview": "book-(3).png" },
+        { "order": 4, "name": "book-(4)", "thumbnail": "book-(4).png", "preview": "book-(4).png" }
+      ]
+    },
+    {
+      "label": "Choose Eye",
+      "folder": "eye",
+      "thumbnail_dir": "\\\\NCNAS\\homes\\daocta\\T10\\POD4 Xmas Ugly Sweatshirt\\mk\\1\\thumbnail\\girl book\\eye",
+      "preview_dir": "\\\\NCNAS\\homes\\daocta\\T10\\POD4 Xmas Ugly Sweatshirt\\mk\\1\\ct\\girl book\\eye",
+      "options": [
+        { "order": 1, "name": "eye-(1)", "thumbnail": "eye-(1).png", "preview": "eye-(1).png" },
+        { "order": 2, "name": "eye-(2)", "thumbnail": "eye-(2).png", "preview": "eye-(2).png" },
+        { "order": 3, "name": "eye-(3)", "thumbnail": "eye-(3).png", "preview": "eye-(3).png" },
+        { "order": 4, "name": "eye-(4)", "thumbnail": "eye-(4).png", "preview": "eye-(4).png" }
+      ]
+    },
+    {
+      "label": "Choose Hair",
+      "folder": "hair",
+      "thumbnail_dir": "\\\\NCNAS\\homes\\daocta\\T10\\POD4 Xmas Ugly Sweatshirt\\mk\\1\\thumbnail\\girl book\\hair",
+      "preview_dir": "\\\\NCNAS\\homes\\daocta\\T10\\POD4 Xmas Ugly Sweatshirt\\mk\\1\\ct\\girl book\\hair",
+      "options": [
+        { "order": 1, "name": "hair-(1)", "thumbnail": "hair-(1).png", "preview": "hair-(1).png" },
+        { "order": 2, "name": "hair-(2)", "thumbnail": "hair-(2).png", "preview": "hair-(2).png" },
+        { "order": 3, "name": "hair-(3)", "thumbnail": "hair-(3).png", "preview": "hair-(3).png" },
+        { "order": 4, "name": "hair-(4)", "thumbnail": "hair-(4).png", "preview": "hair-(4).png" }
+      ]
+    }
+  ],
+  "meta": {
+    "generated_by": "local_agent_v1.0",
+    "generated_at": "2025-10-30T13:00:00+07:00",
+    "notes": "Agent scan NAS structure under mk/1 for product 'girl book'. Used for auto-generating Amazon customization dropdowns."
+  }
+}

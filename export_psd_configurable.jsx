@@ -95,12 +95,12 @@ export_psd_configurable.jsx (unified traversal with full reporting)
     // Report accumulator
     ////////////////////////////
     var __report = {
-        missingGroupPaths: [], 
-        missingPaths: [],
-        missingTextTargets: [], 
-        missingShowLayers: [],
-        configErrors: [], 
-        actionParamErrors: [], 
+        missingGroupPaths: [], // group_path không tới được
+        missingPaths: [],       // path (group/layer) không tìm thấy
+        missingTextTargets: [], // text layer không tìm thấy
+        missingShowLayers: [],  //group_choice: showLayer không tìm thấy
+        configErrors: [],       // lỗi config chung
+        actionParamErrors: [],  // action thiếu tham số hoặc sai
         notes: []
     };
 
@@ -830,30 +830,52 @@ export_psd_configurable.jsx (unified traversal with full reporting)
             }
         }
 
-        // ===== Export JPG =====
-        var outFolder=new Folder(cfg.outputFolder || (Folder.myDocuments.fsName + "/psd_export")); 
-        if(!outFolder.exists) {
+                // ===== Export (JPG / PNG tùy config) =====
+        var outFolder = new Folder(cfg.outputFolder || (Folder.myDocuments.fsName + "/psd_export"));
+        if (!outFolder.exists) {
             outFolder.create();
             __log("Created output folder: " + outFolder.fsName);
         }
 
-        var jpgQ = (typeof cfg.jpgQuality === "number") 
-            ? Math.min(12, Math.max(0, Math.round(cfg.jpgQuality))) 
-            : 12;
+        // NEW: đọc format từ config, mặc định jpg
+        var outFormat = (cfg.outputFormat ? String(cfg.outputFormat) : "jpg").toLowerCase();
+        if (outFormat === "jpeg") outFormat = "jpg";
 
-        var outName = cfg.outputFilename || (psdFile.name.replace(/\.[^\.]+$/, "") + "_export.jpg");
+        // tên file xuất
+        var outName = cfg.outputFilename;
+        if (!outName || outName === "") {
+            // nếu không gửi sẵn tên thì tự build
+            if (outFormat === "png") {
+                outName = psdFile.name.replace(/\.[^\.]+$/, "") + "_export.png";
+            } else {
+                outName = psdFile.name.replace(/\.[^\.]+$/, "") + "_export.jpg";
+            }
+        }
 
-        var jpgOpt=new JPEGSaveOptions(); 
-        jpgOpt.quality=jpgQ;
-        jpgOpt.embedColorProfile=true; 
-        jpgOpt.formatOptions=FormatOptions.STANDARDBASELINE; 
-        jpgOpt.matte=MatteType.NONE;
-        
-        var outFile=new File(outFolder.fsName + "/" + outName);
-        __log("Exporting JPG -> " + outFile.fsName + " | quality=" + jpgQ);
-        
-        doc.saveAs(outFile, jpgOpt, true, Extension.LOWERCASE);
-        __log("Export OK: " + outFile.fsName);
+        var outFile = new File(outFolder.fsName + "/" + outName);
+
+        if (outFormat === "png") {
+            // ---- PNG ----
+            var pngOpt = new PNGSaveOptions();
+            __log("Exporting PNG -> " + outFile.fsName);
+            doc.saveAs(outFile, pngOpt, true, Extension.LOWERCASE);
+            __log("Export PNG OK: " + outFile.fsName);
+        } else {
+            // ---- JPG (mặc định) ----
+            var jpgQ = (typeof cfg.jpgQuality === "number")
+                ? Math.min(12, Math.max(0, Math.round(cfg.jpgQuality)))
+                : 12;
+
+            var jpgOpt = new JPEGSaveOptions();
+            jpgOpt.quality = jpgQ;
+            jpgOpt.embedColorProfile = true;
+            jpgOpt.formatOptions = FormatOptions.STANDARDBASELINE;
+            jpgOpt.matte = MatteType.NONE;
+
+            __log("Exporting JPG -> " + outFile.fsName + " | quality=" + jpgQ);
+            doc.saveAs(outFile, jpgOpt, true, Extension.LOWERCASE);
+            __log("Export JPG OK: " + outFile.fsName);
+        }
 
     }catch(e){ 
         __log("TOP-LEVEL ERROR: " + e); 

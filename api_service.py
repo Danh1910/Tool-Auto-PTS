@@ -51,6 +51,10 @@ def generate_design():
         actions = data.get("actions")
         main_image_url = (data.get("main_image_url") or "").strip()
 
+        # NEW: đọc định dạng xuất
+        output_format = (data.get("output_format") or "jpg").strip().lower()
+        if output_format not in ("jpg", "jpeg", "png"):
+            output_format = "jpg"   # fallback an toàn
 
         if not order_id or not psd_filename or not isinstance(actions, list):
             return jsonify({
@@ -61,21 +65,31 @@ def generate_design():
         order_folder_name = _sanitize_folder_name(order_id)
         downloaded_mockup_path = None
 
-
         # --- Các giá trị cố định ---
         psd_folder = r"C:\Users\MSI\Design_PSD"
         output_folder = os.path.join(psd_folder, "Image_output")
         psd_full_path = os.path.join(psd_folder, psd_filename)
-        output_filename = f"{order_id}.jpg"
-        jpg_quality = 12
 
+        # NEW: đặt tên file theo format
+        if output_format in ("png",):
+            output_filename = f"{order_id}.png"
+        else:
+            output_filename = f"{order_id}.jpg"
+
+        jpg_quality = 12  # chỉ dùng khi là JPG
+
+        # NEW: build payload linh hoạt theo format
         final_payload = {
             "psdFilePath": psd_full_path,
             "outputFolder": output_folder,
             "outputFilename": output_filename,
-            "jpgQuality": jpg_quality,
+            "outputFormat": output_format,   # <<< gửi sang script để nó biết export kiểu gì
             "actions": actions
         }
+
+        # chỉ thêm jpgQuality khi cần
+        if output_format in ("jpg", "jpeg"):
+            final_payload["jpgQuality"] = jpg_quality
 
         # Tên file tạm cơ bản (giữ nguyên như code cũ)
         config_path = os.path.join(os.getcwd(), "psd_config.json")
@@ -153,14 +167,14 @@ def generate_design():
         # Nếu có main_image_url -> tải mockup về (safe timeout)
         if main_image_url:
             try:
-                # Lấy tên file từ URL (nếu có phần mở rộng)
+                from urllib.parse import urlparse
+                import re, tempfile, requests
+
                 parsed = urlparse(main_image_url)
                 base = os.path.basename(parsed.path) or "mockup.jpg"
-                # đảm bảo có .jpg/.jpeg/.png; nếu không thì gán .jpg
                 if not re.search(r'\.(jpe?g|png)$', base, re.IGNORECASE):
                     base = "mockup.jpg"
 
-                # tải về thư mục tạm
                 tmpdir = tempfile.gettempdir()
                 downloaded_mockup_path = os.path.join(tmpdir, f"{order_folder_name}__{base}")
 
@@ -174,10 +188,8 @@ def generate_design():
                 print(f"[MOCKUP][WARN] Cannot download mockup from URL: {main_image_url} -> {de}")
                 downloaded_mockup_path = None
 
-
         # 👉 Gọi hàm upload của module đã tách
         if not main_image_url:
-            # === Giữ NGUYÊN hành vi cũ ===
             drive_link = upload_to_drive(
                 output_path,
                 output_filename,
@@ -188,11 +200,10 @@ def generate_design():
                 "status": "success",
                 "message": "PSD processed successfully",
                 "outputPath": drive_link,
-                "report": report_data or {}
+                "report": report_data or {},
+                "format": output_format
             })
         else:
-            # === Hành vi MỚI khi có main_image_url ===
-            # Upload ảnh PTS và mockup (nếu tải được) vào: /<DATE>/<ORDER_ID>/
             upload_info = {}
 
             up1 = upload_to_drive_advanced(
@@ -201,8 +212,8 @@ def generate_design():
                 parent_folder_id=FOLDER_ID,
                 use_date_subfolder=True,
                 order_subfolder=order_folder_name,
-                make_public_link=False,  # giữ nguyên phạm vi theo token
-                return_folder_link=True, # trả thêm link folder
+                make_public_link=False,
+                return_folder_link=True,
             )
             upload_info["design_link"] = up1["webViewLink"]
             upload_info["folder_link"] = up1.get("folderWebLink")
@@ -216,7 +227,6 @@ def generate_design():
                     use_date_subfolder=True,
                     order_subfolder=order_folder_name,
                     make_public_link=False,
-                    # không cần lấy lại folder_link lần 2
                 )
                 upload_info["mockup_link"] = up2["webViewLink"]
             else:
@@ -228,12 +238,14 @@ def generate_design():
                 "outputPath": upload_info["design_link"],
                 "mockupPath": upload_info["mockup_link"],
                 "folderPath": upload_info["folder_link"],
-                "report": report_data or {}
+                "report": report_data or {},
+                "format": output_format
             })
 
     except Exception as e:
         print(f"[EXCEPTION] {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
+
 
 # ---- thêm ngay dưới route /generate hoặc trên cũng được ----
 @app.post("/jobs")

@@ -87,30 +87,44 @@ def _post_json_with_retry(url: str, payload: dict, tries=3, delay=2):
 # =========================
 # Photoshop runner (render only)
 # =========================
-def _run_photoshop(order_id: str, psd_filename: str, actions: list):
+def _run_photoshop(order_id: str, psd_filename: str, actions: list, output_format: str = "jpg"):
     job = _get_job()
     job_id = job.get_id() if job else order_id
 
-    psd_full_path   = os.path.join(PSD_FOLDER, psd_filename)
-    output_filename = f"{order_id}.jpg"
-    jpg_quality     = 12
+    # chuẩn hoá format
+    fmt = (output_format or "jpg").strip().lower()
+    if fmt == "jpeg":
+        fmt = "jpg"
+    if fmt not in ("jpg", "png"):
+        fmt = "jpg"
+
+    psd_full_path = os.path.join(PSD_FOLDER, psd_filename)
+
+    # đặt tên file theo format
+    if fmt == "png":
+        output_filename = f"{order_id}.png"
+    else:
+        output_filename = f"{order_id}.jpg"
+
+    jpg_quality = 12  # chỉ dùng cho jpg
 
     # payload cho JSX
     final_payload = {
         "psdFilePath": psd_full_path,
         "outputFolder": OUTPUT_FOLDER,
         "outputFilename": output_filename,
-        "jpgQuality": jpg_quality,
+        "outputFormat": fmt,     # <<< quan trọng: match với JSX bạn vừa sửa
         "actions": actions
     }
+    if fmt == "jpg":
+        final_payload["jpgQuality"] = jpg_quality
 
     # file tạm (dùng tên cố định hoặc tùy bạn nhân bản theo job_id)
     cwd         = os.getcwd()
     config_path = os.path.join(cwd, "psd_config.json")
     result_path = os.path.join(cwd, "psd_result.json")
-    log_path    = os.path.join(cwd, "psd_result.log")  # gộp chung log
+    log_path    = os.path.join(cwd, "psd_result.log")
 
-    # Ghi config + LOG
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(final_payload, f, indent=2, ensure_ascii=False)
 
@@ -118,14 +132,13 @@ def _run_photoshop(order_id: str, psd_filename: str, actions: list):
     _log(f"Report JSON will be at: {result_path}")
     _log("Payload sent to Photoshop:\n" + json.dumps(final_payload, indent=2, ensure_ascii=False))
 
-    # Ưu tiên dùng python hiện tại + đường dẫn tuyệt đối run_ps_script.py
     script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "run_ps_script.py"))
     python_exe  = sys.executable or "py"
     cmd = [python_exe, script_path, config_path, result_path, log_path]
 
     _log(f"Executing: {cmd!r}")
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=900)  # 15 phút
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
     except Exception as ex:
         _log(f"[ERROR] Failed to start Photoshop runner: {ex}")
         raise
@@ -139,10 +152,11 @@ def _run_photoshop(order_id: str, psd_filename: str, actions: list):
         _log("[ERROR] Photoshop script failed (non-zero exit).")
         raise RuntimeError(res.stderr or res.stdout or "Photoshop script failed")
 
+    # đường dẫn đúng với tên file vừa đặt
     output_path = os.path.join(OUTPUT_FOLDER, output_filename)
     _log(f"[SUCCESS] Generated image: {output_path}")
 
-    # Đọc report (nếu có) và log ngắn gọn
+    # đọc report như cũ ...
     report_data = None
     if os.path.exists(result_path):
         try:
@@ -180,15 +194,20 @@ def _run_photoshop(order_id: str, psd_filename: str, actions: list):
 
     if not os.path.exists(output_path):
         _log("[ERROR] Output image not found (export may have failed).")
-        return {"status":"error","message":"Output image not found (export may have failed)","report": report_data or {}}
+        return {
+            "status":"error",
+            "message":"Output image not found (export may have failed)",
+            "report": report_data or {}
+        }
 
-    # Trả về LOCAL PATH để tầng trên tự xử lý upload
     return {
         "status":"success",
         "message":"PSD processed successfully",
         "outputLocalPath": output_path,
-        "report": report_data or {}
+        "report": report_data or {},
+        "format": fmt        # <<< để tầng trên biết file ra là gì
     }
+
 
 # =========================
 # Task chính (được enqueue)
@@ -212,6 +231,8 @@ def process_design_job(payload: dict):
     psd_file = payload.get("template")
     actions  = payload.get("actions", [])
     main_image_url = (payload.get("main_image_url") or "").strip()
+    output_format = (payload.get("output_format") or "jpg").strip().lower()   # <<< NEW
+
     # chỉ lấy phần trước dấu "_" để đặt tên thư mục
     pure_order = str(order_id).split("_", 1)[0] if order_id else "order"
     order_folder_name = _sanitize_folder_name(pure_order)
@@ -227,8 +248,9 @@ def process_design_job(payload: dict):
         job.save_meta()
 
     try:
-        result = _run_photoshop(order_id, psd_file, actions)
-
+        # truyền format xuống
+        result = _run_photoshop(order_id, psd_file, actions, output_format=output_format)
+        
         status = result.get("status")
         report = result.get("report") or {}
         local_path = result.get("outputLocalPath")
