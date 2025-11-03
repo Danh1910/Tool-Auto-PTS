@@ -7,6 +7,8 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import requests
+from datetime import datetime
+
 
 from google_drive_service import upload_to_drive, upload_to_drive_advanced  # advanced uploader
 
@@ -21,6 +23,16 @@ DEFAULT_CALLBACK_URL = "https://bkteam.top/dungvuong-admin/api/design_callback.p
 # =========================
 # Helpers (job/meta/log)
 # =========================
+def _now_time_str_vn() -> str:
+    """Chuỗi HHMMSS theo Asia/Ho_Chi_Minh (fallback localtime nếu thiếu zoneinfo)."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Ho_Chi_Minh")
+        now = datetime.now(tz)
+    except Exception:
+        now = datetime.now()
+    return now.strftime("%H%M%S")
+
 def _get_job():
     try:
         return get_current_job()
@@ -237,6 +249,8 @@ def process_design_job(payload: dict):
     pure_order = str(order_id).split("_", 1)[0] if order_id else "order"
     order_folder_name = _sanitize_folder_name(pure_order)
 
+    order_folder_name_with_time = f"{order_folder_name}_{_now_time_str_vn()}"
+
     if not order_id or not psd_file or not isinstance(actions, list):
         _log("[ERROR] Invalid payload for process_design_job.")
         _callback(order_id, status="error", drive_url=None, message="Invalid payload", report=None)
@@ -282,7 +296,7 @@ def process_design_job(payload: dict):
                 filename=os.path.basename(local_path),
                 parent_folder_id=FOLDER_ID,
                 use_date_subfolder=True,
-                order_subfolder=order_folder_name,
+                order_subfolder=order_folder_name_with_time,
                 make_public_link=False,
                 return_folder_link=True,
             )
@@ -298,7 +312,7 @@ def process_design_job(payload: dict):
                     base = "mockup.jpg"
 
                 tmpdir = tempfile.gettempdir()
-                downloaded_mockup_path = os.path.join(tmpdir, f"{order_folder_name}__{base}")
+                downloaded_mockup_path = os.path.join(tmpdir, f"{order_folder_name_with_time}__{base}")
 
                 r = requests.get(main_image_url, timeout=20)
                 r.raise_for_status()
@@ -310,7 +324,7 @@ def process_design_job(payload: dict):
                     filename=os.path.basename(downloaded_mockup_path),
                     parent_folder_id=FOLDER_ID,
                     use_date_subfolder=True,
-                    order_subfolder=order_folder_name,
+                    order_subfolder=order_folder_name_with_time,
                     make_public_link=False,
                     return_folder_link=False,
                 )
@@ -324,10 +338,17 @@ def process_design_job(payload: dict):
             job.save_meta()
 
         # callback (giữ tương thích key cũ 'drive_url')
+
+        # -> Nếu có mockup (tức có tạo subfolder), ưu tiên trả về link thư mục
+        if main_image_url:
+            callback_link = upload_info.get("folder_link") or upload_info.get("design_link")
+        else:
+            callback_link = upload_info.get("design_link")
+
         _callback(
             order_id,
             status="success",
-            drive_url=upload_info["design_link"],
+            drive_url=callback_link,
             message="PSD processed successfully",
             report=report
         )
