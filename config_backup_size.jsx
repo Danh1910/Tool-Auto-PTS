@@ -443,158 +443,205 @@ export_psd_configurable.jsx (unified traversal with full reporting)
         return String(s||'').replace(/\s+/g, '');
     }
 
-    // ===== Special: toggle by name length for PRE-BIBLE07-PTH-THD-BCV.psd =====
-    function __countNameChars(raw) {
-        // Đếm ký tự bỏ khoảng trắng; nếu muốn bỏ dấu chấm/ký tự đặc biệt,
-        // thay \s+ bằng /[^A-Za-z0-9]+/ tùy nhu cầu.
-        return String(raw || '').replace(/\s+/g, '').length;
-    }
-
-    // Lấy danh sách LayerSet con theo thứ tự số (1,2,3,...) nếu tên là số;
-    // nếu không parse được số thì giữ nguyên thứ tự xuất hiện
-    function __getIndexedChildren(layerSet) {
-        var arr = [];
-        for (var i = 0; i < layerSet.layerSets.length; i++) {
-            var g = layerSet.layerSets[i];
-            var n = parseInt(g.name, 10);
-            arr.push({
-                group: g,
-                order: isNaN(n) ? (100000 + i) : n // nhóm tên số sẽ xếp trước, còn lại theo thứ tự
-            });
-        }
-        // nếu không có group con thì có thể chính các artLayer là slot — vẫn hỗ trợ luôn
-        for (var j = 0; j < layerSet.artLayers.length; j++) {
-            var a = layerSet.artLayers[j];
-            var m = parseInt(a.name, 10);
-            arr.push({
-                layer: a,
-                order: isNaN(m) ? (200000 + j) : m
-            });
-        }
-        arr.sort(function(a,b){ return a.order - b.order; });
-        return arr;
-    }
-
-    function __toggleFirstNVisible(container, n) {
-        n = Math.max(0, n|0);
-        var kids = __getIndexedChildren(container);
-        for (var i = 0; i < kids.length; i++) {
-            var k = kids[i];
-            var target = k.group || k.layer;
-            target.visible = (i < n);
-        }
-    }
-
-    function __applyNameLengthVisibilityForBible07(doc, nameValue) {
-        var clean = String(nameValue || '').replace(/\s+/g, '');
-        var chars = clean.split('');
-        var L = chars.length;
-        __log("[PRE-BIBLE07] Name='" + nameValue + "' -> chars=" + chars.join(',') + " | length=" + L);
-
-        // Ưu tiên đi vào SO nội bộ: 1>1 (nếu fail thì dùng 1)
-        var roots = [
-            ["1>1", "1"] // nếu bạn muốn thao tác cả cột phải, giữ dòng này
-        ];
-
-        for (var i = 0; i < roots.length; i++) {
-            var tried = roots[i];
-            var doneRoot = false;
-
-            for (var j = 0; j < tried.length && !doneRoot; j++) {
-                var p = tried[j];
-                var r = resolvePathFlexible(doc, p);
-
-                if (!r.ok) {
-                    __log("[PRE-BIBLE07] path fail: " + p + " | reason=" + (r.reason || ""));
-                    closeSOChain(r.openedDocs || [], false);
-                    continue;
-                }
-
-                var scope = r.scope;                    // Document (nếu đang ở trong SO) hoặc LayerSet
-                var type  = scope && scope.typename;
-                if (type !== "LayerSet" && type !== "Document") {
-                    __log("[PRE-BIBLE07] unsupported scope type=" + type + " at path=" + p);
-                    closeSOChain(r.openedDocs || [], false);
-                    continue;
-                }
-
-                // 1) Bật đúng N slot đầu tiên (1..N), tắt phần còn lại
-                var slots = __getIndexedChildren(scope);   // trả về list các group/layer được sort theo số
-                for (var s = 0; s < slots.length; s++) {
-                    var slot = slots[s].group || slots[s].layer;
-                    var visible = s < L;
-                    slot.visible = visible;
-                    if (!visible) continue;
-
-                    // 2) CHUI THÊM 1 TẦNG "1" BÊN TRONG MỖI SLOT
-                    //    slot có thể chứa group "1" hoặc SO "1"
-                    var innerScope = null;
-                    var innerOpened = [];
-
-                    var g1 = getChildLayerSet(slot, "1");
-                    if (g1) {
-                        innerScope = g1; // là group "1"
-                    } else {
-                        var a1 = getChildArtLayer(slot, "1");
-                        if (a1 && isSmartObjectLayer(a1)) {
-                            // mở SO "1"
-                            try {
-                                var innerDoc = openSOAndReturnDoc(a1);
-                                innerScope = innerDoc;
-                                innerOpened.push(innerDoc);
-                                __log("[PRE-BIBLE07] opened inner SO '1' inside slot " + slot.name);
-                            } catch(eOpen) {
-                                __log("[PRE-BIBLE07] FAIL open inner SO '1': " + eOpen);
-                                innerScope = slot; // fallback: làm ngay trong slot
-                            }
-                        } else {
-                            innerScope = slot; // không có "1" -> fallback
-                        }
-                    }
-
-                    // 3) Trong innerScope: bật đúng layer <chữ>1, tắt các layer còn lại
-                    var ch = chars[s].toUpperCase();
-                    var targetName = ch + "1";
-
-                    // tắt hết trước để chắc chắn
-                    // try { setAllLayersVisibility(innerScope, false); } catch(e){}
-
-                    // bật mục tiêu: có thể là group hoặc layer
-                    var letter = __findLayerAnyRecursive(innerScope, targetName);
-                    if (letter) {
-                        try { letter.visible = true; __log("slot#" + (s+1) + " -> show '" + targetName + "'"); }
-                        catch(e3){ __log("WARN cannot set visible '" + targetName + "': " + e3); }
-                    } else {
-                        __log("WARN: not found '" + targetName + "' inside slot " + slot.name);
-                    }
-
-                    // nếu có mở SO bên trong, lưu/đóng lại
-                    try { closeSOChain(innerOpened, true); } catch(eClose){}
-                }
-
-                closeSOChain(r.openedDocs || [], true);
-                doneRoot = true;
-            }
-
-            if (!doneRoot) {
-                __push_unique(__report.missingGroupPaths, String(tried.join(" | ")));
-            }
-        }
-    }
 
 
-    function __findLayerAnyRecursive(scope, name) {
-        // 1) thử con trực tiếp
-        var g = getChildLayerSet(scope, name); if (g) return g;
-        var a = getChildArtLayer(scope, name); if (a) return a;
 
-        // 2) đi đệ quy trong các group con
-        for (var i = 0; i < scope.layerSets.length; i++) {
-            var r = __findLayerAnyRecursive(scope.layerSets[i], name);
-            if (r) return r;
-        }
+
+
+    // ===== GLOBAL AUTOFIT =====
+    // đổi số tại đây để quan sát hành vi (1/2/3/…)
+    var AUTOFIT_PROFILE = 30;  // 1: nhẹ, 2: vừa, 3: mạnh
+
+    // stepPT: Size giảm mỗi lần.
+    // maxIter: Số vòng lặp tối đa.
+
+    // bạn có thể tự thêm 4,5,... với thông số riêng
+    var AUTOFIT_PROFILES = {
+        1: { minFontSize: 8,  stepPt: 1, maxIter: 50, tolerancePx: 0 }, // nhẹ nhất - giảm mịn
+        2: { minFontSize: 9,  stepPt: 2,   maxIter: 50, tolerancePx: 1 }, // hơi mạnh
+        3: { minFontSize: 10, stepPt: 3, maxIter: 40, tolerancePx: 1 }, // trung bình
+        4: { minFontSize: 11, stepPt: 4,   maxIter: 30, tolerancePx: 2 }, // mạnh
+        5: { minFontSize: 12, stepPt: 5,   maxIter: 3, tolerancePx: 3 },  // cực mạnh (giảm nhanh)
+        10: { minFontSize: 12, stepPt: 10,   maxIter: 30, tolerancePx: 3 },
+        20: { minFontSize: 50, stepPt: 20,   maxIter: 10, tolerancePx: 3 },
+        30: { minFontSize: 50, stepPt: 30,   maxIter: 5, tolerancePx: 3 },
+    };
+
+    // cho phép tắt/bật mặc định
+    var AUTOFIT_DEFAULT_ON = true;
+
+    // ===== Unit helpers =====
+    function __unitToPx(u) {
+        try {
+            if (u === null || typeof u === "undefined") return null;
+            if (u.as) return u.as("px");
+            // đôi khi width/height là số thường (đơn vị px)
+            if (typeof u === "number") return u;
+        } catch (e) {}
         return null;
     }
+
+    function __getFontSizePt(textItem) {
+        try {
+            var sz = textItem.size; // UnitValue
+            if (sz && sz.as) return sz.as("pt");
+        } catch (e) {}
+        return null;
+    }
+    function __setFontSizePt(textItem, pt) {
+        try { textItem.size = new UnitValue(pt, "pt"); } catch (e) {}
+    }
+
+    // đo bounds layer (px)
+    function __measureLayerBoundsPx(layer) {
+        try {
+            var b = layer.bounds; // [left, top, right, bottom] -> UnitValue
+            var w = b[2].as("px") - b[0].as("px");
+            var h = b[3].as("px") - b[1].as("px");
+            return { w: w, h: h };
+        } catch (e) {}
+        return { w: 0, h: 0 };
+    }
+
+
+    function __wouldFitAtSize(textLayer, testPt, tolPx) {
+        var ti = textLayer.textItem;
+        if (!ti) return true;
+
+        var boxH = __unitToPx(ti.height);
+        var boxW = __unitToPx(ti.width);
+
+        var keep = {
+            sizePt: __getFontSizePt(ti),
+            h: boxH
+        };
+        var keepHyp = null, keepLeadAuto = null, keepLead = null;
+
+        try { keepHyp = ti.hyphenation; ti.hyphenation = false; } catch(e){}
+
+        // Bật auto leading tạm thời để chiều cao co theo cỡ chữ
+        try { 
+            keepLeadAuto = ti.autoLeadingAmount; // percent
+            keepLead     = ti.leading;           // UnitValue or null
+            // 120% là mặc định của PS. Nếu muốn giữ nguyên, bỏ 2 dòng dưới:
+            ti.autoLeadingAmount = 120; 
+            ti.leading = undefined; // cho PS hiểu là auto
+        } catch(e){}
+
+        __setFontSizePt(ti, testPt);
+        try { ti.height = new UnitValue(9999, "px"); } catch(e){}
+
+        // ép reflow
+        app.refresh(); // hoặc $.sleep(10); app.refresh();
+
+        // đo without FX (ổn định hơn)
+        var need = __measureBoundsNoFX(textLayer);
+
+        // khôi phục
+        try { ti.height = new UnitValue(keep.h, "px"); } catch(e){}
+        try { ti.hyphenation = keepHyp; } catch(e){}
+        try { 
+            ti.autoLeadingAmount = keepLeadAuto;
+            if (keepLead) ti.leading = keepLead;
+        } catch(e){}
+
+        var okH = (need.h <= keep.h + (tolPx || 0));
+        var okW = (need.w <= __unitToPx(ti.width) + Math.max(2, (tolPx || 0))); // rộng nới thêm 1-2px
+        return okH && okW;
+    }
+
+
+    function __toggleLayerFXVisible(visible) {
+        // Toggle property 'layerFXVisible' on target layer (Ordn.Trgt)
+        var d = new ActionDescriptor();
+        var r = new ActionReference();
+        r.putEnumerated(charIDToTypeID('Lyr '), charIDToTypeID('Ordn'), charIDToTypeID('Trgt'));
+        d.putReference(charIDToTypeID('null'), r);
+        var fx = new ActionDescriptor();
+        fx.putBoolean(stringIDToTypeID('layerFXVisible'), !!visible);
+        d.putObject(charIDToTypeID('T   '), stringIDToTypeID('layerSection'), fx);
+        try { executeAction(charIDToTypeID('setd'), d, DialogModes.NO); } catch(e){}
+    }
+
+    // helper: đo bounds “sạch FX”
+    function __measureBoundsNoFX(layer) {
+        var doc = app.activeDocument, keepActive = doc.activeLayer;
+        doc.activeLayer = layer;
+        __toggleLayerFXVisible(false);
+        app.refresh();
+        var b = __measureLayerBoundsPx(layer);
+        __toggleLayerFXVisible(true);
+        doc.activeLayer = keepActive;
+        return b;
+    }
+
+
+
+
+    /**
+     * Thu nhỏ font cho Paragraph Text để cố gắng chứa vừa trong text box.
+     * - Không “đo” được overflow tuyệt đối trong PS, nên mình dùng phương pháp thực dụng:
+     *   đo bounds hiện tại so với hộp (ti.width/ti.height), nếu còn “đụng trần” thì tiếp tục giảm.
+     * - Trả về { ok, reason, iter, finalPt }
+     */
+    function __fitParagraphTextToBox(textLayer, options, logPrefix) {
+        logPrefix = logPrefix || "";
+        if (!textLayer || !textLayer.textItem) return { ok:false, reason:"noText" };
+
+        var ti = textLayer.textItem;
+        try {
+            if (ti.kind !== TextType.PARAGRAPHTEXT) {
+                return { ok:false, reason:"notParagraph" };
+            }
+        } catch(eKind) {
+            return { ok:false, reason:"noKind" };
+        }
+
+        var boxW = __unitToPx(ti.width);
+        var boxH = __unitToPx(ti.height);
+        if (boxW === null || boxH === null) return { ok:false, reason:"noTextBox" };
+
+        var originalPt = __getFontSizePt(ti);
+        if (originalPt === null) return { ok:false, reason:"noFontSize" };
+
+        var minPt   = (options && typeof options.minFontSize === "number") ? options.minFontSize : 10;
+        var stepPt  = (options && typeof options.stepPt      === "number") ? options.stepPt      : 1;
+        var maxIter = (options && typeof options.maxIter     === "number") ? options.maxIter     : 50;
+        var tol     = (options && typeof options.tolerancePx === "number") ? options.tolerancePx : 1;
+
+        var curPt = originalPt;
+        var i = 0;
+
+        // chiến lược: nếu layer bounds chạm đúng chiều cao hộp (≈ boxH) và/hoặc rộng hơn hộp → tiếp tục giảm
+        // (vì overflow đoạn cuối thường làm height “đụng trần” boxH)
+        function needShrink() {
+            var b = __measureLayerBoundsPx(textLayer);
+            var overH = (Math.abs(b.h - boxH) <= tol) || (b.h > boxH + tol);
+            var overW = (b.w > boxW + tol);
+            return overH || overW;
+        }
+
+        // vòng lặp giảm
+        while (i < maxIter) {
+            if (!needShrink()) break;
+            if (curPt - stepPt < minPt) {
+                curPt = minPt;
+            } else {
+                curPt -= stepPt;
+            }
+            __setFontSizePt(ti, curPt);
+            i++;
+        }
+
+        var ok = !needShrink();
+        var reason = ok ? "fit" : "minReachedOrLimit";
+        __log(logPrefix + "fitParagraphTextToBox: box=" + Math.round(boxW) + "x" + Math.round(boxH)
+            + " | originalPt=" + originalPt + " => finalPt=" + curPt + " | iter=" + i + " | ok=" + ok);
+
+        return { ok: ok, reason: reason, iter: i, finalPt: curPt, originalPt: originalPt };
+    }
+
+
 
 
 
@@ -740,6 +787,19 @@ export_psd_configurable.jsx (unified traversal with full reporting)
                     __log("text_replace: found text layer, setting text to '" + act.text + "'");
                     tl.textItem.contents = String(act.text);
 
+
+                    // ===== Normalize paragraph so it doesn't hyphenate too early =====
+                    try {
+                        tl.textItem.hyphenation = false;   // tắt dấu gạch nối tự động
+                    } catch(e){ __log("WARN: cannot turn off hyphenation: " + e); }
+
+                    try {
+                        // tránh “đầy hơi” vì tracking/scale
+                        tl.textItem.tracking = 0;          // về 0 (nếu layer đang để tracking lớn)
+                        tl.textItem.horizontalScale = 100; // %
+                        tl.textItem.verticalScale   = 100; // %
+                    } catch(e){ /* optional */ }
+
                     // 2) (Optional) Đổi font nếu có
                     if (act.font) {
                         var rawReq = String(act.font);
@@ -845,6 +905,47 @@ export_psd_configurable.jsx (unified traversal with full reporting)
 
 
 
+                    // 3b) Thu nhỏ font để text vừa khung, dùng đo "height needed"
+                    var wantFit = AUTOFIT_DEFAULT_ON;
+                    if (typeof act.shrinkToFit !== "undefined") wantFit = !!act.shrinkToFit;
+
+                    var profNum = (typeof act.shrinkProfile === "number") ? act.shrinkProfile : AUTOFIT_PROFILE;
+                    var prof = AUTOFIT_PROFILES[profNum] || AUTOFIT_PROFILES[2];
+
+                    if (wantFit) {
+                        var ti = tl.textItem;
+                        var origPt = __getFontSizePt(ti);
+                        var minPt  = (typeof act.minFontSize === "number") ? act.minFontSize : prof.minFontSize;
+                        var step   = prof.stepPt;
+                        var tol    = prof.tolerancePx;
+                        var maxIt  = prof.maxIter;
+
+                        var cur = origPt, it = 0;
+
+                        // nếu đã vừa thì thôi
+                        var fits = __wouldFitAtSize(tl, cur, tol);
+
+                        while (!fits && it < maxIt) {
+                            var next = (cur - step < minPt) ? minPt : (cur - step);
+                            __setFontSizePt(ti, next);
+                            cur = next;
+                            fits = __wouldFitAtSize(tl, cur, tol);
+                            it++;
+                            if (cur <= minPt && !fits) break; // chạm đáy mà vẫn không vừa
+                        }
+
+                        __log("autofit(new): profile=" + profNum + " | origPt=" + origPt +
+                            " => finalPt=" + cur + " | iter=" + it + " | fits=" + fits);
+
+                        if (!fits) {
+                            __report.notes.push({ layer: String(act.layerName),
+                                msg: "Still overset at min font", finalPt: cur, profile: profNum });
+                        }
+                    }
+
+
+
+
                     // 3) (Optional) Đổi màu
                     //    - luôn set text color (an toàn)
                     //    - và mặc định set Color Overlay (designer hay dùng FX). Có thể điều khiển qua act.apply:
@@ -853,7 +954,7 @@ export_psd_configurable.jsx (unified traversal with full reporting)
                     //        + undefined            => set cả text color và overlay
                     if (act.color) {
                         var hex = String(act.color);
-                        var mode = (typeof act.apply === "undefined") ? "text" : String(act.apply);
+                        var mode = (typeof act.apply === "undefined") ? "both" : String(act.apply);
 
                         try {
                             if (mode === "text" || mode === "both") {
@@ -885,32 +986,6 @@ export_psd_configurable.jsx (unified traversal with full reporting)
                     closeSOChain(ret2.openedDocs, false);
                 }
             }
-
-            // ===== TEXT_PARSE (đặc biệt cho PRE-BIBLE07) =====
-            else if (t === "text_parse") {
-                // Chấp nhận cả cấu trúc cũ/new:
-                // { type:"text_parse", value:"Mashel" }
-                // { type:"text_parse", key:"Custom Name", value:"Mashel" }
-                var val = (typeof act.value === "string") ? act.value : "";
-                if (!val || !val.replace(/\s+/g, '')) {
-                    __pushParamError(ai, t, "Missing or empty value", { value: val });
-                    continue;
-                }
-
-                // Chỉ áp dụng khi đang mở đúng file PRE-BIBLE07-PTH-THD-BCV.psd
-                var isBible07 = /PRE-BIBLE07-PTH-THD-BCV\.psd$/i.test(String(app.activeDocument.name || ""));
-                if (!isBible07) {
-                    __log("text_parse ignored (not PRE-BIBLE07 file).");
-                    continue;
-                }
-
-                try {
-                    __applyNameLengthVisibilityForBible07(app.activeDocument, val);
-                } catch (e) {
-                    __pushParamError(ai, t, "apply PRE-BIBLE07 failed", { error: String(e) });
-                }
-            }
-
 
             // ===== VISIBILITY =====
             else if(t==="visibility"){
