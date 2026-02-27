@@ -75,16 +75,25 @@ def _sanitize_folder_name(name: str) -> str:
 # =========================
 def _post_json(url: str, payload: dict, timeout=10, headers=None):
     try:
-        data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
-        h = {'Content-Type': 'application/json'}
+        h = {
+            "Content-Type": "application/json",
+            "User-Agent": "PostmanRuntime/7.36.0",
+            "Accept": "*/*",
+        }
         if headers:
             h.update(headers)
-        req = urllib.request.Request(url, data=data, headers=h)
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return True, resp.read().decode('utf-8', errors='ignore')
+
+        r = requests.post(url, json=payload, headers=h, timeout=timeout)
+
+        if r.ok:
+            return True, r.text
+
+        _log(f"[WARN] Callback failed: HTTP {r.status_code} {r.reason} body={r.text[:200]}")
+        return False, r.text
     except Exception as e:
         _log(f"[WARN] Callback failed: {e}")
         return False, str(e)
+
 
 def _post_json_with_retry(url: str, payload: dict, tries=3, delay=2):
     last = None
@@ -99,7 +108,7 @@ def _post_json_with_retry(url: str, payload: dict, tries=3, delay=2):
 # =========================
 # Photoshop runner (render only)
 # =========================
-def _run_photoshop(order_id: str, psd_filename: str, actions: list, output_format: str = "jpg"):
+def _run_photoshop(order_id: str, psd_filename: str, actions: list, output_format: str = "jpg", mode: str = None):
     job = _get_job()
     job_id = job.get_id() if job else order_id
 
@@ -120,16 +129,25 @@ def _run_photoshop(order_id: str, psd_filename: str, actions: list, output_forma
 
     jpg_quality = 12  # chỉ dùng cho jpg
 
-    # payload cho JSX
+    # payload cho JSX (giữ thứ tự key cho dễ debug)
     final_payload = {
         "psdFilePath": psd_full_path,
         "outputFolder": OUTPUT_FOLDER,
         "outputFilename": output_filename,
-        "outputFormat": fmt,     # <<< quan trọng: match với JSX bạn vừa sửa
-        "actions": actions
+        "outputFormat": fmt,     # jpg / png
     }
+
+    # nếu có mode hợp lệ (test / live) thì đẩy vào ngay sau outputFormat
+    if mode in ("test", "live"):
+        final_payload["mode"] = mode
+
+    # actions luôn có
+    final_payload["actions"] = actions
+
+    # chỉ thêm jpgQuality nếu là jpg
     if fmt == "jpg":
         final_payload["jpgQuality"] = jpg_quality
+
 
     # file tạm (dùng tên cố định hoặc tùy bạn nhân bản theo job_id)
     cwd         = os.getcwd()
@@ -244,6 +262,7 @@ def process_design_job(payload: dict):
     actions  = payload.get("actions", [])
     main_image_url = (payload.get("main_image_url") or "").strip()
     output_format = (payload.get("output_format") or "jpg").strip().lower()   # <<< NEW
+    mode = (payload.get("mode") or "").strip().lower()   # <<< đọc mode từ PHP (test/live)
 
     # chỉ lấy phần trước dấu "_" để đặt tên thư mục
     pure_order = str(order_id).split("_", 1)[0] if order_id else "order"
@@ -253,7 +272,7 @@ def process_design_job(payload: dict):
 
     if not order_id or not psd_file or not isinstance(actions, list):
         _log("[ERROR] Invalid payload for process_design_job.")
-        _callback(order_id, status="error", drive_url=None, message="Invalid payload", report=None)
+        _callback(order_id, status="error", drive_url=None, message="Invalid payload", report=None, mode=mode)
         return {"status":"error","message":"Invalid payload"}
 
     _log(f"Start process_design_job | job_id={job.get_id() if job else 'N/A'} | order_id={order_id} | template={psd_file}")
@@ -262,8 +281,15 @@ def process_design_job(payload: dict):
         job.save_meta()
 
     try:
-        # truyền format xuống
-        result = _run_photoshop(order_id, psd_file, actions, output_format=output_format)
+        # truyền format + mode xuống
+        result = _run_photoshop(
+            order_id,
+            psd_file,
+            actions,
+            output_format=output_format,
+            mode=mode
+        )
+
         
         status = result.get("status")
         report = result.get("report") or {}
@@ -273,7 +299,7 @@ def process_design_job(payload: dict):
             if job:
                 job.meta["progress"] = "failed"
                 job.save_meta()
-            _callback(order_id, status=status or "error", drive_url=None, message=result.get("message"), report=report)
+            _callback(order_id, status=status or "error", drive_url=None, message=result.get("message"), report=report, mode=mode)
             return result
 
         # ==== UPLOAD THEO 2 NHÁNH ====
@@ -350,7 +376,8 @@ def process_design_job(payload: dict):
             status="success",
             drive_url=callback_link,
             message="PSD processed successfully",
-            report=report
+            report=report,
+            mode=mode
         )
 
         # trả về result phong phú cho /jobs/<id>
@@ -371,10 +398,10 @@ def process_design_job(payload: dict):
             job.meta["progress"] = "failed"
             job.meta["error"] = str(e)
             job.save_meta()
-        _callback(order_id, status="error", drive_url=None, message=str(e), report=None)
+        _callback(order_id, status="error", drive_url=None, message=str(e), report=None, mode=mode)
         return {"status":"error","message":str(e)}
 
-def _callback(order_id: str, status: str, drive_url: str | None, message: str | None,  report: dict | None):
+def _callback(order_id: str, status: str, drive_url: str | None, message: str | None,  report: dict | None, mode: str | None = None):
     """Gửi kết quả về PHP theo URL hardcode."""
     if not DEFAULT_CALLBACK_URL:
         _log("[WARN] No DEFAULT_CALLBACK_URL configured; skip callback.")
@@ -390,10 +417,12 @@ def _callback(order_id: str, status: str, drive_url: str | None, message: str | 
         "message": message,
         "report": report or {},
         "logs": (job.meta.get("logs") if job else []),
-        "ts": int(time.time())
+        "ts": int(time.time()),
+        "mode": mode  # <<< NEW
     }
     ok, resp = _post_json_with_retry(DEFAULT_CALLBACK_URL, payload, tries=3, delay=2)
     _log(f"[CALLBACK] sent={ok} resp={(str(resp)[:200] if resp else '')}")
+
 
 # =========================
 # test đơn giản

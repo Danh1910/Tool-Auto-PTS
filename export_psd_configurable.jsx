@@ -351,105 +351,8 @@ export_psd_configurable.jsx (unified traversal with full reporting)
     }
 
 
-    // ===== Smart font helpers =====
-    function __uniquePush(arr, v){ for (var i=0;i<arr.length;i++) if (arr[i]===v) return; arr.push(v); }
-
-    function __buildFontCandidates(userFont) {
-        var base = String(userFont || '').trim();
-        var cands = [];
-        if (!base) return cands;
-
-        var baseNoSpace = base.replace(/\s+/g, '');
-        var baseDash    = base.replace(/\s+/g, '-');
-        var baseUnder   = base.replace(/\s+/g, '_');
-        var baseLow     = base.toLowerCase();
-
-        // chính xác & dạng đơn giản
-        __uniquePush(cands, base);
-        __uniquePush(cands, baseNoSpace);
-        __uniquePush(cands, baseDash);
-        __uniquePush(cands, baseUnder);
-        __uniquePush(cands, baseLow);
-        __uniquePush(cands, baseLow.replace(/\s+/g, ''));
-
-        var styles = ['Regular', 'Roman', 'Book', 'Normal', 'Medium'];
-        for (var i=0; i<styles.length; i++) {
-            var st = styles[i];
-
-            var suffixes = [
-                '-' + st,
-                '_' + st,
-                ' ' + st,
-                '-' + st.toLowerCase(),
-                '_' + st.toLowerCase()
-            ];
-
-            for (var j=0; j<suffixes.length; j++) {
-                var suf = suffixes[j];
-                __uniquePush(cands, base + suf);
-                __uniquePush(cands, baseNoSpace + suf);
-                __uniquePush(cands, baseDash + suf);
-                __uniquePush(cands, baseUnder + suf);
-
-                // Thêm kiểu double (Acme_Regular-Regular)
-                __uniquePush(cands, baseUnder + '_Regular');
-                __uniquePush(cands, baseUnder + '-Regular');
-            }
-        }
-
-        // fallback cuối: kiểu PS name liền mạch
-        __uniquePush(cands, baseNoSpace + 'Regular');
-        __uniquePush(cands, baseNoSpace + '-Regular');
-        __uniquePush(cands, baseNoSpace + '_Regular');
-
-        return cands;
-    }
-
-
-    function __setFontSmart(textLayer, userFont, logPrefix) {
-        var tried = [];
-        var cands = __buildFontCandidates(userFont);
-
-        for (var i=0; i<cands.length; i++) {
-            var cand = cands[i];
-            try {
-                textLayer.textItem.font = cand; // Photoshop sẽ throw nếu tên không hợp lệ
-                __log((logPrefix||'') + "set font OK -> " + cand);
-                return cand; // thành công
-            } catch (e) {
-                tried.push(cand);
-            }
-        }
-        __log((logPrefix||'') + "set font FAIL. Tried: " + tried.join(', '));
-        return null; // không đặt được
-    }
-
-    function __injectRegularSuffixIfBare(name){
-        // 1) bỏ hết khoảng trắng trước
-        var s = __stripSpaces(String(name || ''));
-        if (!s) return s;
-
-        // 2) nếu đã có style ở cuối thì giữ nguyên
-        if (/(Regular|Roman|Book|Normal|Medium|Bold|Italic)$/i.test(s)) return s;
-
-        // 3) nếu đã có dấu '-' (tức đã có hậu tố/biến thể gì đó) thì giữ nguyên
-        if (/-/.test(s)) return s;
-
-        // 4) mặc định ép thêm -Regular
-        return s + '-Regular';
-    }
-
-    function __stripSpaces(s){
-        return String(s||'').replace(/\s+/g, '');
-    }
 
     // ===== Special: toggle by name length for PRE-BIBLE07-PTH-THD-BCV.psd =====
-    function __countNameChars(raw) {
-        // Đếm ký tự bỏ khoảng trắng; nếu muốn bỏ dấu chấm/ký tự đặc biệt,
-        // thay \s+ bằng /[^A-Za-z0-9]+/ tùy nhu cầu.
-        return String(raw || '').replace(/\s+/g, '').length;
-    }
-
     // Lấy danh sách LayerSet con theo thứ tự số (1,2,3,...) nếu tên là số;
     // nếu không parse được số thì giữ nguyên thứ tự xuất hiện
     function __getIndexedChildren(layerSet) {
@@ -475,26 +378,18 @@ export_psd_configurable.jsx (unified traversal with full reporting)
         return arr;
     }
 
-    function __toggleFirstNVisible(container, n) {
-        n = Math.max(0, n|0);
-        var kids = __getIndexedChildren(container);
-        for (var i = 0; i < kids.length; i++) {
-            var k = kids[i];
-            var target = k.group || k.layer;
-            target.visible = (i < n);
-        }
-    }
-
-    function __applyNameLengthVisibilityForBible07(doc, nameValue) {
+    // Thêm tham số detailPath (chuỗi, vd: "1", "1>SO")
+    // rootsAlternatives vẫn như cũ: [ ["1>1","1"] ] ...
+    function __applyNameLengthVisibilityForBible07(doc, nameValue, rootsAlternatives, detailPath, alignCenter) {
+        
+        alignCenter = !!alignCenter;
         var clean = String(nameValue || '').replace(/\s+/g, '');
         var chars = clean.split('');
         var L = chars.length;
         __log("[PRE-BIBLE07] Name='" + nameValue + "' -> chars=" + chars.join(',') + " | length=" + L);
 
-        // Ưu tiên đi vào SO nội bộ: 1>1 (nếu fail thì dùng 1)
-        var roots = [
-            ["1>1", "1"] // nếu bạn muốn thao tác cả cột phải, giữ dòng này
-        ];
+        var roots = (rootsAlternatives && rootsAlternatives.length) ? rootsAlternatives : [["1>1","1"]];
+        var detail = __normalizeDetailPath_ES5(detailPath); // ← dùng detail_path từ action
 
         for (var i = 0; i < roots.length; i++) {
             var tried = roots[i];
@@ -510,7 +405,7 @@ export_psd_configurable.jsx (unified traversal with full reporting)
                     continue;
                 }
 
-                var scope = r.scope;                    // Document (nếu đang ở trong SO) hoặc LayerSet
+                var scope = r.scope;
                 var type  = scope && scope.typename;
                 if (type !== "LayerSet" && type !== "Document") {
                     __log("[PRE-BIBLE07] unsupported scope type=" + type + " at path=" + p);
@@ -518,58 +413,89 @@ export_psd_configurable.jsx (unified traversal with full reporting)
                     continue;
                 }
 
-                // 1) Bật đúng N slot đầu tiên (1..N), tắt phần còn lại
-                var slots = __getIndexedChildren(scope);   // trả về list các group/layer được sort theo số
-                for (var s = 0; s < slots.length; s++) {
+                // 1) Bật đúng L slot, có thể canh giữa nếu alignCenter = true
+                var slots = __getIndexedChildren(scope);
+                var totalSlots = slots.length;
+                var letterCount = {}; // đếm số lần xuất hiện mỗi ký tự
+
+                if (totalSlots === 0) {
+                    closeSOChain(r.openedDocs || [], false);
+                    continue;
+                }
+
+                // Tính vị trí bắt đầu nếu canh giữa
+                var startIndex = 0;
+                if (alignCenter && L < totalSlots) {
+                    startIndex = Math.floor((totalSlots - L - 1) / 2); // ví dụ 9-5=4 -> 2 → slot 3..7
+                }
+
+                for (var s = 0; s < totalSlots; s++) {
                     var slot = slots[s].group || slots[s].layer;
-                    var visible = s < L;
+
+                    // index tương ứng trong chuỗi ký tự
+                    var charIdx = s - startIndex;
+                    var visible = (charIdx >= 0 && charIdx < L);
+
                     slot.visible = visible;
                     if (!visible) continue;
 
-                    // 2) CHUI THÊM 1 TẦNG "1" BÊN TRONG MỖI SLOT
-                    //    slot có thể chứa group "1" hoặc SO "1"
-                    var innerScope = null;
-                    var innerOpened = [];
 
-                    var g1 = getChildLayerSet(slot, "1");
-                    if (g1) {
-                        innerScope = g1; // là group "1"
-                    } else {
-                        var a1 = getChildArtLayer(slot, "1");
-                        if (a1 && isSmartObjectLayer(a1)) {
-                            // mở SO "1"
-                            try {
-                                var innerDoc = openSOAndReturnDoc(a1);
-                                innerScope = innerDoc;
-                                innerOpened.push(innerDoc);
-                                __log("[PRE-BIBLE07] opened inner SO '1' inside slot " + slot.name);
-                            } catch(eOpen) {
-                                __log("[PRE-BIBLE07] FAIL open inner SO '1': " + eOpen);
-                                innerScope = slot; // fallback: làm ngay trong slot
-                            }
+                    // 2) Dò theo detail_path tương đối bên trong SLOT (không fallback).
+                    var innerScope = slot;
+                    var innerOpened = [];
+                    if (detail) {
+                        var rr = __resolveRelativePathFlexible(slot, detail);
+                        if (rr.ok) {
+                            innerScope = rr.scope;
+                            innerOpened = rr.openedDocs || [];
                         } else {
-                            innerScope = slot; // không có "1" -> fallback
+                            // Ghi log + report, KHÔNG fallback
+                            __log("[PRE-BIBLE07] detail_path FAIL: '" + detail + "' | slot='" + (slot.name || "?") + "' | reason=" + (rr.reason || ""));
+                            __report.missingPaths.push({
+                                context: "text_parse.detail_path",
+                                rootPath: String(p),          // p là groupPath đang chạy
+                                slotName: String(slot.name || ""),
+                                detailPath: String(detail),
+                                reason: String(rr.reason || "")
+                            });
+                            closeSOChain(rr.openedDocs || [], false);
+                            // Bỏ qua slot này
+                            continue;
                         }
                     }
 
-                    // 3) Trong innerScope: bật đúng layer <chữ>1, tắt các layer còn lại
-                    var ch = chars[s].toUpperCase();
-                    var targetName = ch + "1";
 
-                    // tắt hết trước để chắc chắn
-                    // try { setAllLayersVisibility(innerScope, false); } catch(e){}
+                    // 3) Bật layer <chữ>1 hoặc <chữ>2 tuỳ lần lặp lại
+                    var ch = chars[charIdx].toUpperCase();
+                    letterCount[ch] = (letterCount[ch] || 0) + 1;
 
-                    // bật mục tiêu: có thể là group hoặc layer
-                    var letter = __findLayerAnyRecursive(innerScope, targetName);
-                    if (letter) {
-                        try { letter.visible = true; __log("slot#" + (s+1) + " -> show '" + targetName + "'"); }
-                        catch(e3){ __log("WARN cannot set visible '" + targetName + "': " + e3); }
+                    var varIdx = ((letterCount[ch] - 1) % 2) + 1; // 1,2,1,2,…
+                    var targetName = ch + String(varIdx);
+
+                    var letter1 = __findLayerAnyRecursive(innerScope, ch + "1");
+                    var letter2 = __findLayerAnyRecursive(innerScope, ch + "2");
+
+                    if (varIdx === 1) {
+                        if (letter1) { try { letter1.visible = true; } catch(e){} }
+                        if (letter2) { try { letter2.visible = false; } catch(e){} }
                     } else {
-                        __log("WARN: not found '" + targetName + "' inside slot " + slot.name);
+                        if (letter2) { try { letter2.visible = true; } catch(e){} }
+                        if (letter1) { try { letter1.visible = false; } catch(e){} }
                     }
 
-                    // nếu có mở SO bên trong, lưu/đóng lại
-                    try { closeSOChain(innerOpened, true); } catch(eClose){}
+                    if (!letter1 && !letter2) {
+                        var letterAny = __findLayerAnyRecursive(innerScope, targetName);
+                        if (letterAny) {
+                            try { letterAny.visible = true; } catch(e3){ __log("WARN cannot set visible '" + targetName + "': " + e3); }
+                        } else {
+                            __log("WARN: not found '" + ch + "1' or '" + ch + "2' inside slot " + slot.name);
+                        }
+                    }
+
+                    __log("slot#" + (s+1) + " -> show '" + targetName + "'");
+
+                    // đóng SO con (nếu có mở) với save=true vì ta đã thay đổi visibility
+                    closeSOChain(innerOpened, true);
                 }
 
                 closeSOChain(r.openedDocs || [], true);
@@ -597,28 +523,133 @@ export_psd_configurable.jsx (unified traversal with full reporting)
     }
 
 
+    function __normalizeGroupPathAlternatives_ES5(gp) {
+        // Trả về dạng: [ [ "1>1", "1" ] ]  (một mảng các phương án thử lần lượt)
+        // Các trường hợp:
+        //  - null/undefined           -> [["1>1","1"]] (fallback tương thích ngược)
+        //  - "1>1"                    -> [["1>1"]]
+        //  - "1>1 | 1"                -> [["1>1","1"]]
+        //  - ["1>1","1"]              -> [["1>1","1"]]
+        function __trimSafe(s){ return String(s||"").replace(/^\s+|\s+$/g,""); }
 
-    ////////////////////////////
-    // Main
-    ////////////////////////////
-    if (!new File(configPath).exists){ 
-        __log("CONFIG ERROR: file not found at " + configPath); 
-        __report.configErrors.push({
-            code: "configFileNotFound",
-            message: "Config file not found",
-            path: configPath
-        });
-        __writeReportJSON(resultPath);
-        return; 
+        if (gp == null) return [["1>1","1"]];
+
+        // Nếu là array phẳng
+        if (gp instanceof Array) {
+            var out = [];
+            for (var i=0;i<gp.length;i++){
+                var it = __trimSafe(gp[i]);
+                if (it) out.push(it);
+            }
+            if (out.length===0) out.push("1>1","1");
+            return [out];
+        }
+
+        // Nếu là string: cho phép "a>b | x>y"
+        var s = __trimSafe(gp);
+        if (!s) return [["1>1","1"]];
+
+        var alts = [];
+        // tách theo ký tự |
+        var pieces = s.split("|");
+        for (var j=0;j<pieces.length;j++){
+            var p = __trimSafe(pieces[j]);
+            if (p) alts.push(p);
+        }
+        if (alts.length===0) alts.push(s);
+        return [alts];
     }
 
-    var doc=null;
-    try{
-        var cfgTxt = readFile(configPath);
-        __log("Config read OK (" + cfgTxt.length + " bytes)");
-        
-        var cfg = safeParseJSON(cfgTxt);
-        
+    // Đi từ 1 scope (slot) theo đường dẫn tương đối (vd: "1", "1>SO", "A>B>1")
+    // Tự mở Smart Object nếu gặp ArtLayer là SO.
+    // Trả về: { ok, scope, openedDocs, reason }
+    function __resolveRelativePathFlexible(scope, relPath) {
+        var opened = [];
+        function __trimSafe(s){ return String(s||"").replace(/^\s+|\s+$/g,""); }
+        var s = __trimSafe(relPath || "");
+        if (!s) return { ok:true, scope: scope, openedDocs: opened }; // không chỉ định -> dùng chính scope
+
+        var parts = s.split(">");
+        var cur = scope;
+
+        for (var i=0; i<parts.length; i++) {
+            var name = __trimSafe(parts[i]);
+            if (!name) continue;
+
+            // Ưu tiên group
+            var g = getChildLayerSet(cur, name);
+            if (g) { cur = g; continue; }
+
+            // Không phải group -> thử ArtLayer
+            var a = getChildArtLayer(cur, name);
+            if (a) {
+                if (isSmartObjectLayer(a)) {
+                    // mở SO để đi sâu
+                    try {
+                        var innerDoc = openSOAndReturnDoc(a);
+                        opened.push(innerDoc);
+                        cur = innerDoc;
+                        continue;
+                    } catch (eOpen) {
+                        return { ok:false, reason: "Cannot open SO '" + name + "': " + eOpen, openedDocs: opened };
+                    }
+                } else {
+                    // Gặp ArtLayer thường thì chỉ chấp nhận nếu là node cuối
+                    if (i === parts.length - 1) {
+                        cur = a; // trỏ vào layer này
+                        continue;
+                    } else {
+                        return { ok:false, reason: "ArtLayer '" + name + "' is not SO and not terminal", openedDocs: opened };
+                    }
+                }
+            }
+
+            return { ok:false, reason: "Not found '" + name + "' under current scope", openedDocs: opened };
+        }
+
+        return { ok:true, scope: cur, openedDocs: opened };
+    }
+
+    function __normalizeDetailPath_ES5(dp) {
+        // Không còn default. Nếu không truyền -> trả về chuỗi rỗng.
+        // Nếu truyền -> trim thôi.
+        if (dp == null) return "";
+        return String(dp).replace(/^\s+|\s+$/g, "");
+    }
+
+
+
+    ////////////////////////////
+    // Main (refactored)
+    ////////////////////////////
+    var doc = null;
+
+    // --- Local helpers (chỉ dùng trong Main) ---
+    function loadConfigOrReport(path) {
+        if (!new File(path).exists) {
+            __log("CONFIG ERROR: file not found at " + path);
+            __report.configErrors.push({
+                code: "configFileNotFound",
+                message: "Config file not found",
+                path: path
+            });
+            __writeReportJSON(resultPath);
+            return null;
+        }
+        var txt = readFile(path);
+        __log("Config read OK (" + txt.length + " bytes)");
+        var cfg = null;
+        try {
+            cfg = safeParseJSON(txt);
+        } catch (e) {
+            __log("CONFIG ERROR: parse JSON failed: " + e);
+            __report.configErrors.push({
+                code: "configJSONInvalid",
+                message: "Config JSON invalid: " + e
+            });
+            __writeReportJSON(resultPath);
+            return null;
+        }
         if (!cfg.psdFilePath) {
             __log("CONFIG ERROR: psdFilePath missing");
             __report.configErrors.push({
@@ -626,422 +657,326 @@ export_psd_configurable.jsx (unified traversal with full reporting)
                 message: "psdFilePath missing in config"
             });
             __writeReportJSON(resultPath);
-            return;
+            return null;
         }
+        return cfg;
+    }
 
-        var psdFile=new File(cfg.psdFilePath); 
-        if(!psdFile.exists){ 
-            __log("CONFIG ERROR: PSD not found at " + cfg.psdFilePath);
+    function openPSDOrReport(psdPath) {
+        var f = new File(psdPath);
+        if (!f.exists) {
+            __log("CONFIG ERROR: PSD not found at " + psdPath);
             __report.configErrors.push({
                 code: "psdFileNotFound",
                 message: "PSD file not found",
-                path: String(cfg.psdFilePath)
-            }); 
-            __writeReportJSON(resultPath); 
-            return; 
+                path: String(psdPath)
+            });
+            __writeReportJSON(resultPath);
+            return null;
+        }
+        var d = app.open(f);
+        __log("Opened PSD: " + d.name);
+        return d;
+    }
+
+    // ========== Action Handlers ==========
+    function handle_group_choice(ai, act) {
+        if (!act.groupPath || !act.showLayer) {
+            __pushParamError(ai, "group_choice", "Missing groupPath or showLayer", {
+                groupPath: act.groupPath || "",
+                showLayer: act.showLayer || ""
+            });
+            return;
         }
 
-        doc=app.open(psdFile); 
-        __log("Opened PSD: " + doc.name);
-        
-        var acts=cfg.actions||[];
-        __log("Actions count: " + acts.length);
+        var ret = resolvePathFlexible(app.activeDocument, act.groupPath);
+        if (!ret.ok) {
+            __log("group_choice: FAIL - " + ret.reason);
+            __push_unique(__report.missingGroupPaths, String(act.groupPath));
+            closeSOChain(ret.openedDocs, false);
+            return;
+        }
 
-        for(var ai=0; ai<acts.length; ai++){
-            var act=acts[ai]; 
-            if(!act || !act.type) {
-                __log("Action[" + ai + "]: invalid/empty");
-                continue;
+        var container = (ret.scope.typename === "LayerSet") ? ret.scope : null;
+        if (!container) {
+            __log("group_choice: FAIL - resolved path is not a LayerSet");
+            __push_unique(__report.missingGroupPaths, String(act.groupPath));
+            closeSOChain(ret.openedDocs, false);
+            return;
+        }
+
+        __log("group_choice: found container '" + container.name + "'");
+        setAllLayersVisibility(container, false);
+
+        var ok = setArtLayerVisibleInGroup(container, act.showLayer);
+        __log("group_choice: setArtLayerVisibleInGroup('" + act.showLayer + "') -> " + ok);
+
+        if (!ok) {
+            var f = findArtLayerByName(container, act.showLayer, true);
+            if (f) {
+                __log("group_choice: found showLayer recursively");
+                f.visible = true;
+                ok = true;
+            } else {
+                __log("group_choice: showLayer '" + act.showLayer + "' NOT FOUND");
             }
-            
-            var t=act.type; 
-            __log("Action[" + ai + "] type=" + t + " | groupPath=" + (act.groupPath||"") + " | path=" + (act.path||""));
+        }
 
-            // ===== GROUP_CHOICE =====
-            if(t==="group_choice"){
-                if (!act.groupPath || !act.showLayer) {
-                    __pushParamError(ai, t, "Missing groupPath or showLayer", {
-                        groupPath: act.groupPath || "",
-                        showLayer: act.showLayer || ""
-                    });
-                    continue;
+        if (!ok) {
+            __report.missingShowLayers.push({
+                groupPath: String(act.groupPath),
+                showLayer: String(act.showLayer)
+            });
+        }
+        closeSOChain(ret.openedDocs, ok);
+    }
+
+    function handle_text_replace(ai, act) {
+        if (!act.layerName || typeof act.text === "undefined") {
+            __pushParamError(ai, "text_replace", "Missing layerName or text", {
+                groupPath: act.groupPath || "",
+                layerName: act.layerName || "",
+                hasText: typeof act.text !== "undefined"
+            });
+            return;
+        }
+
+        var ret2 = resolvePathFlexible(app.activeDocument, act.groupPath || "");
+        if (!ret2.ok) {
+            __log("text_replace: FAIL - " + ret2.reason);
+            __push_unique(__report.missingGroupPaths, String(act.groupPath || ""));
+            closeSOChain(ret2.openedDocs, false);
+            return;
+        }
+
+        var target = ret2.scope;
+        __log("text_replace: searching for layer '" + act.layerName + "' in scope '" + (target.name || target.typename) + "'");
+
+        var tl = findArtLayerByName(target, act.layerName, true);
+
+        if (tl && typeof tl.textItem !== "undefined") {
+            // (1) Nội dung
+            __log("text_replace: found text layer, setting text to '" + act.text + "'");
+            tl.textItem.contents = String(act.text);
+
+            // (2) Font (optional)
+            if (act.font) {
+                var rawReq = String(act.font);
+
+                function __fontKey(s) {
+                    return String(s || "")
+                        .toLowerCase()
+                        .replace(/regular|roman|book|normal|medium|bold|italic/g, "")
+                        .replace(/[^a-z0-9]/g, "");
+                }
+                function __buildFontCandidates_RegularThenBare(base) {
+                    var arr = [];
+                    function push(u) { for (var i = 0; i < arr.length; i++) if (arr[i] === u) return; arr.push(u); }
+                    var b = String(base || '');
+                    var bTrim = b.replace(/^\s+|\s+$/g, '');
+                    var bNoSp = bTrim.replace(/\s+/g, '');
+                    var bDash = bTrim.replace(/\s+/g, '-');
+                    var bUnder = bTrim.replace(/\s+/g, '_');
+                    var bLower = bTrim.toLowerCase();
+                    var bLowerNo = bLower.replace(/\s+/g, '');
+
+                    push(bTrim + '-Regular'); push(bTrim + '_Regular'); push(bTrim + 'Regular');
+                    push(bNoSp + '-Regular'); push(bNoSp + '_Regular'); push(bNoSp + 'Regular');
+                    push(bDash + '-Regular');  push(bUnder + '_Regular');
+                    push(bLower + '-regular'); push(bLower + '_regular'); push(bLower + 'regular');
+                    push(bLowerNo + '-regular'); push(bLowerNo + '_regular'); push(bLowerNo + 'regular');
+
+                    // Bare
+                    push(bTrim); push(bNoSp); push(bDash); push(bUnder); push(bLower); push(bLowerNo);
+
+                    // “double”
+                    push(bUnder + '_Regular'); push(bUnder + '-Regular');
+                    return arr;
+                }
+                var baseKey = __fontKey(rawReq);
+                function __tryApplyFont(layer, cand) {
+                    try { layer.textItem.font = cand; }
+                    catch (e) { return { ok: false, applied: "", reason: "throw:" + e }; }
+                    var applied = String(layer.textItem.font || "");
+                    var appliedKey = __fontKey(applied);
+                    var ok = (appliedKey === baseKey) || (appliedKey.indexOf(baseKey) !== -1);
+                    return { ok: ok, applied: applied, reason: ok ? "verified" : ("mismatch:" + applied) };
                 }
 
-                var ret=resolvePathFlexible(app.activeDocument, act.groupPath);
-                
-                if(!ret.ok){ 
-                    __log("group_choice: FAIL - " + ret.reason);
-                    __push_unique(__report.missingGroupPaths, String(act.groupPath)); 
-                    closeSOChain(ret.openedDocs, false); 
-                    continue; 
+                var tried = [], okFont = null;
+                var cands = __buildFontCandidates_RegularThenBare(rawReq);
+                __log("text_replace: font candidates order -> " + cands.join(' | '));
+                for (var ci = 0; ci < cands.length; ci++) {
+                    var cand = cands[ci];
+                    var r = __tryApplyFont(tl, cand);
+                    if (r.ok) { __log("text_replace: set font OK -> " + cand + " (applied: " + r.applied + ")"); okFont = r.applied || cand; break; }
+                    else tried.push(cand + " [" + r.reason + "]");
                 }
-                
-                var container = (ret.scope.typename==="LayerSet") ? ret.scope : null;
-                if(!container){ 
-                    __log("group_choice: FAIL - resolved path is not a LayerSet");
-                    __push_unique(__report.missingGroupPaths, String(act.groupPath)); 
-                    closeSOChain(ret.openedDocs, false); 
-                    continue; 
-                }
-                
-                __log("group_choice: found container '" + container.name + "'");
-                setAllLayersVisibility(container, false);
-                
-                var ok=setArtLayerVisibleInGroup(container, act.showLayer);
-                __log("group_choice: setArtLayerVisibleInGroup('" + act.showLayer + "') -> " + ok);
-                
-                if(!ok){ 
-                    var f=findArtLayerByName(container, act.showLayer, true); 
-                    if(f){
-                        __log("group_choice: found showLayer recursively");
-                        f.visible=true; 
-                        ok=true;
-                    } else {
-                        __log("group_choice: showLayer '" + act.showLayer + "' NOT FOUND");
-                    }
-                }
-                
-                if(!ok){ 
-                    __report.missingShowLayers.push({
-                        groupPath: String(act.groupPath),
-                        showLayer: String(act.showLayer)
-                    }); 
-                }
-                
-                closeSOChain(ret.openedDocs, ok);
-            }
-
-            // ===== TEXT_REPLACE =====
-            else if (t === "text_replace") {
-                if (!act.layerName || typeof act.text === "undefined") {
-                    __pushParamError(ai, t, "Missing layerName or text", {
-                        groupPath: act.groupPath || "",
-                        layerName: act.layerName || "",
-                        hasText: typeof act.text !== "undefined"
-                    });
-                    continue;
-                }
-
-                var ret2 = resolvePathFlexible(app.activeDocument, act.groupPath || "");
-                if (!ret2.ok) {
-                    __log("text_replace: FAIL - " + ret2.reason);
-                    __push_unique(__report.missingGroupPaths, String(act.groupPath || ""));
-                    closeSOChain(ret2.openedDocs, false);
-                    continue;
-                }
-
-                var target = ret2.scope;
-                __log("text_replace: searching for layer '" + act.layerName + "' in scope '" + target.name + "'");
-
-                var tl = findArtLayerByName(target, act.layerName, true);
-
-                if (tl && typeof tl.textItem !== "undefined") {
-                    // 1) Đổi nội dung
-                    __log("text_replace: found text layer, setting text to '" + act.text + "'");
-                    tl.textItem.contents = String(act.text);
-
-                    // 2) (Optional) Đổi font nếu có
-                    if (act.font) {
-                        var rawReq = String(act.font);
-
-                        // Chuẩn hoá tên để so family: bỏ khoảng trắng / gạch / ký tự không chữ số
-                        function __fontKey(s){
-                            return String(s || "")
-                                .toLowerCase()
-                                .replace(/regular|roman|book|normal|medium|bold|italic/g, "") // bỏ style từ khoá
-                                .replace(/[^a-z0-9]/g, ""); // bỏ mọi thứ còn lại
-                        }
-
-                        // Build candidates: ƯU TIÊN -Regular trước, sau đó tới bare
-                        function __buildFontCandidates_RegularThenBare(base) {
-                            var arr = [];
-                            function push(u){ for (var i=0;i<arr.length;i++) if (arr[i]===u) return; arr.push(u); }
-
-                            var b       = String(base || '');
-                            var bTrim   = b.replace(/^\s+|\s+$/g,'');
-                            var bNoSp   = bTrim.replace(/\s+/g,'');
-                            var bDash   = bTrim.replace(/\s+/g,'-');
-                            var bUnder  = bTrim.replace(/\s+/g,'_');
-                            var bLower  = bTrim.toLowerCase();
-                            var bLowerNo= bLower.replace(/\s+/g,'');
-
-                            // 1) Regular-first (đủ biến thể)
-                            push(bTrim + '-Regular');
-                            push(bTrim + '_Regular');
-                            push(bTrim + 'Regular');
-
-                            push(bNoSp + '-Regular');
-                            push(bNoSp + '_Regular');
-                            push(bNoSp + 'Regular');
-
-                            push(bDash + '-Regular');
-                            push(bUnder + '_Regular');
-
-                            push(bLower + '-regular');
-                            push(bLower + '_regular');
-                            push(bLower + 'regular');
-
-                            push(bLowerNo + '-regular');
-                            push(bLowerNo + '_regular');
-                            push(bLowerNo + 'regular');
-
-                            // 2) Bare (không hậu tố)
-                            push(bTrim);
-                            push(bNoSp);
-                            push(bDash);
-                            push(bUnder);
-                            push(bLower);
-                            push(bLowerNo);
-
-                            // 3) “double” hay gặp (để cuối cùng)
-                            push(bUnder + '_Regular');
-                            push(bUnder + '-Regular');
-
-                            return arr;
-                        }
-
-                        // So khớp family: applied phải “giống gốc” sau khi bỏ style/hyphen/space
-                        var baseKey = __fontKey(rawReq);
-
-                        function __tryApplyFont(layer, cand) {
-                            try {
-                                layer.textItem.font = cand; // có thể "set được" nhưng bị map
-                            } catch(e) {
-                                return { ok:false, applied:"", reason:"throw:"+e };
-                            }
-                            var applied = String(layer.textItem.font || "");
-                            var appliedKey = __fontKey(applied);
-
-                            // Chấp nhận khi appliedKey chứa baseKey hoặc khớp hoàn toàn.
-                            // (Dùng contains để cover case PS name thêm foundry prefix/suffix nhẹ.)
-                            var ok = (appliedKey === baseKey) || (appliedKey.indexOf(baseKey) !== -1);
-
-                            return { ok: ok, applied: applied, reason: ok ? "verified" : ("mismatch:"+applied) };
-                        }
-
-                        var tried = [], okFont = null;
-                        var cands = __buildFontCandidates_RegularThenBare(rawReq);
-
-                        __log("text_replace: font candidates order -> " + cands.join(' | '));
-
-                        for (var ci=0; ci<cands.length; ci++){
-                            var cand = cands[ci];
-                            var r = __tryApplyFont(tl, cand);
-                            if (r.ok) {
-                                __log("text_replace: set font OK -> " + cand + " (applied: " + r.applied + ")");
-                                okFont = r.applied || cand;
-                                break;
-                            } else {
-                                tried.push(cand + " [" + r.reason + "]");
-                            }
-                        }
-
-                        if (!okFont) {
-                            __log("text_replace: set font FAIL. Tried: " + tried.join(', '));
-                            __pushParamError(ai, t, "Cannot resolve font name", { requested: rawReq });
-                        }
-                    }
-
-
-
-
-                    // 3) (Optional) Đổi màu
-                    //    - luôn set text color (an toàn)
-                    //    - và mặc định set Color Overlay (designer hay dùng FX). Có thể điều khiển qua act.apply:
-                    //        + "overlay" hoặc true  => chỉ/ưu tiên overlay
-                    //        + "text"               => chỉ đổi text color
-                    //        + undefined            => set cả text color và overlay
-                    if (act.color) {
-                        var hex = String(act.color);
-                        var mode = (typeof act.apply === "undefined") ? "text" : String(act.apply);
-
-                        try {
-                            if (mode === "text" || mode === "both") {
-                                __setTextColorHex(tl, hex);
-                                __log("text_replace: set text color -> " + hex);
-                            }
-                        } catch (e1) {
-                            __log("text_replace: WARN cannot set text color: " + e1);
-                        }
-
-                        try {
-                            if (mode === "overlay" || mode === "both" || mode === "true") {
-                                app.activeDocument.activeLayer = tl; // target layer
-                                __setColorOverlayHex(hex, 100);
-                                __log("text_replace: set Color Overlay -> " + hex);
-                            }
-                        } catch (e2) {
-                            __log("text_replace: WARN cannot set Color Overlay: " + e2);
-                        }
-                    }
-
-                    closeSOChain(ret2.openedDocs, true);
-                } else {
-                    __log("text_replace: text layer '" + act.layerName + "' NOT FOUND or not text");
-                    __report.missingTextTargets.push({
-                        groupPath: String(act.groupPath || ""),
-                        layerName: String(act.layerName)
-                    });
-                    closeSOChain(ret2.openedDocs, false);
+                if (!okFont) {
+                    __log("text_replace: set font FAIL. Tried: " + tried.join(', '));
+                    __pushParamError(ai, "text_replace", "Cannot resolve font name", { requested: rawReq });
                 }
             }
 
-            // ===== TEXT_PARSE (đặc biệt cho PRE-BIBLE07) =====
-            else if (t === "text_parse") {
-                // Chấp nhận cả cấu trúc cũ/new:
-                // { type:"text_parse", value:"Mashel" }
-                // { type:"text_parse", key:"Custom Name", value:"Mashel" }
-                var val = (typeof act.value === "string") ? act.value : "";
-                if (!val || !val.replace(/\s+/g, '')) {
-                    __pushParamError(ai, t, "Missing or empty value", { value: val });
-                    continue;
-                }
-
-                // Chỉ áp dụng khi đang mở đúng file PRE-BIBLE07-PTH-THD-BCV.psd
-                var isBible07 = /PRE-BIBLE07-PTH-THD-BCV\.psd$/i.test(String(app.activeDocument.name || ""));
-                if (!isBible07) {
-                    __log("text_parse ignored (not PRE-BIBLE07 file).");
-                    continue;
-                }
+            // (3) Color (optional)
+            if (act.color) {
+                var hex = String(act.color);
+                var mode = (typeof act.apply === "undefined") ? "text" : String(act.apply);
+                try {
+                    if (mode === "text" || mode === "both") {
+                        __setTextColorHex(tl, hex);
+                        __log("text_replace: set text color -> " + hex);
+                    }
+                } catch (e1) { __log("text_replace: WARN cannot set text color: " + e1); }
 
                 try {
-                    __applyNameLengthVisibilityForBible07(app.activeDocument, val);
-                } catch (e) {
-                    __pushParamError(ai, t, "apply PRE-BIBLE07 failed", { error: String(e) });
-                }
+                    if (mode === "overlay" || mode === "both" || mode === "true") {
+                        app.activeDocument.activeLayer = tl;
+                        __setColorOverlayHex(hex, 100);
+                        __log("text_replace: set Color Overlay -> " + hex);
+                    }
+                } catch (e2) { __log("text_replace: WARN cannot set Color Overlay: " + e2); }
             }
 
+            closeSOChain(ret2.openedDocs, true);
+        } else {
+            __log("text_replace: text layer '" + act.layerName + "' NOT FOUND or not text");
+            __report.missingTextTargets.push({
+                groupPath: String(act.groupPath || ""),
+                layerName: String(act.layerName)
+            });
+            closeSOChain(ret2.openedDocs, false);
+        }
+    }
 
-            // ===== VISIBILITY =====
-            else if(t==="visibility"){
-                if(!act.path || typeof act.visible==="undefined"){
-                    __pushParamError(ai, t, "Missing path or visible", {
-                        path: act.path || "",
-                        hasVisible: typeof act.visible !== "undefined"
-                    });
-                    continue;
-                }
+    function handle_text_parse(ai, act) {
+        var val = (typeof act.value === "string") ? act.value : "";
+        if (!val || !val.replace(/\s+/g, '')) {
+            __pushParamError(ai, "text_parse", "Missing or empty value", { value: val });
+            return;
+        }
+        var roots = __normalizeGroupPathAlternatives_ES5(act.groupPath);
+        var detail = (typeof act.detail_path === "string") ? act.detail_path : null;
+        var alignCenter = !!act.align_center; // NEW
 
-                var parts=toParts(act.path);
-                if (parts.length === 0) {
-                    __pushParamError(ai, t, "Empty path", { path: act.path });
-                    continue;
-                }
+        try {
+            __applyNameLengthVisibilityForBible07(app.activeDocument, val, roots, detail, alignCenter);
+        } catch (e) {
+            __pushParamError(ai, "text_parse", "apply PRE-BIBLE07 failed", { error: String(e) });
+        }
+    }
 
-                var parentPath=parts.slice(0, parts.length-1).join(">");
-                var last=parts[parts.length-1];
-                
-                __log("visibility: parentPath='" + parentPath + "' | last='" + last + "'");
-                
-                var ret3=resolvePathFlexible(app.activeDocument, parentPath);
-                
-                if(!ret3.ok){ 
-                    __log("visibility: FAIL - " + ret3.reason);
-                    __push_unique(__report.missingPaths, String(act.path)); 
-                    closeSOChain(ret3.openedDocs, false); 
-                    continue; 
-                }
-                
-                var cont=ret3.scope; 
-                var tgt=getChildLayerSet(cont, last) || getChildArtLayer(cont, last);
-                
-                if(tgt){ 
-                    __log("visibility: found target '" + last + "', setting visible=" + act.visible);
-                    tgt.visible=!!act.visible; 
-                    closeSOChain(ret3.openedDocs, true); 
-                } else { 
-                    __log("visibility: target '" + last + "' NOT FOUND");
-                    __push_unique(__report.missingPaths, String(act.path)); 
-                    closeSOChain(ret3.openedDocs, false); 
-                }
-            }
 
-            // ===== SMART_EDIT_CONTENTS =====
-            else if(t==="smart_edit_contents"){
-                var soPath=act.smartLayerPath || act.smartLayerName;
-                
-                if(!soPath || !act.inner || !(act.inner instanceof Array)){ 
-                    __pushParamError(ai, t, "Missing smartLayerPath/smartLayerName or inner array", {
-                        hasPath: !!soPath,
-                        hasInner: !!(act.inner),
-                        isArray: act.inner instanceof Array
-                    }); 
-                    continue; 
-                }
+    function handle_visibility(ai, act) {
+        if (!act.path || typeof act.visible === "undefined") {
+            __pushParamError(ai, "visibility", "Missing path or visible", {
+                path: act.path || "",
+                hasVisible: typeof act.visible !== "undefined"
+            });
+            return;
+        }
+        var parts = toParts(act.path);
+        if (parts.length === 0) {
+            __pushParamError(ai, "visibility", "Empty path", { path: act.path });
+            return;
+        }
+        var parentPath = parts.slice(0, parts.length - 1).join(">");
+        var last = parts[parts.length - 1];
 
-                var ret4=resolvePathFlexible(app.activeDocument, soPath);
-                
-                if(!ret4.ok || !ret4.lastArtLayer || !isSmartObjectLayer(ret4.lastArtLayer)){ 
-                    __log("smart_edit_contents: FAIL - " + (ret4.reason || "not SO"));
-                    __push_unique(__report.missingPaths, String(soPath)); 
-                    closeSOChain(ret4.openedDocs, false); 
-                    continue; 
-                }
-                
-                __log("smart_edit_contents: opening SO at '" + soPath + "'");
-                var innerDoc=openSOAndReturnDoc(ret4.lastArtLayer);
-                
-                // Run inner actions recursively (simplified - could call full handler)
-                __log("smart_edit_contents: running " + act.inner.length + " inner actions");
-                // Note: For full support, you'd need to call the main action handler recursively
-                // For now, just log
-                
-                try {
-                    innerDoc.save();
-                    __log("smart_edit_contents: inner doc saved");
-                } catch(e) {
-                    __log("smart_edit_contents: save error - " + e);
-                }
-                
-                try {
-                    innerDoc.close(SaveOptions.SAVECHANGES);
-                    __log("smart_edit_contents: inner doc closed");
-                } catch(e) {
-                    __log("smart_edit_contents: close error - " + e);
-                }
-                
-                closeSOChain(ret4.openedDocs, true);
-            }
+        __log("visibility: parentPath='" + parentPath + "' | last='" + last + "'");
 
-            // ===== UNKNOWN ACTION TYPE =====
-            else {
+        var ret3 = resolvePathFlexible(app.activeDocument, parentPath);
+        if (!ret3.ok) {
+            __log("visibility: FAIL - " + ret3.reason);
+            __push_unique(__report.missingPaths, String(act.path));
+            closeSOChain(ret3.openedDocs, false);
+            return;
+        }
+        var cont = ret3.scope;
+        var tgt = getChildLayerSet(cont, last) || getChildArtLayer(cont, last);
+
+        if (tgt) {
+            __log("visibility: found target '" + last + "', setting visible=" + act.visible);
+            tgt.visible = !!act.visible;
+            closeSOChain(ret3.openedDocs, true);
+        } else {
+            __log("visibility: target '" + last + "' NOT FOUND");
+            __push_unique(__report.missingPaths, String(act.path));
+            closeSOChain(ret3.openedDocs, false);
+        }
+    }
+
+    function handle_smart_edit_contents(ai, act) {
+        var soPath = act.smartLayerPath || act.smartLayerName;
+        if (!soPath || !act.inner || !(act.inner instanceof Array)) {
+            __pushParamError(ai, "smart_edit_contents", "Missing smartLayerPath/smartLayerName or inner array", {
+                hasPath: !!soPath,
+                hasInner: !!(act.inner),
+                isArray: act.inner instanceof Array
+            });
+            return;
+        }
+
+        var ret4 = resolvePathFlexible(app.activeDocument, soPath);
+        if (!ret4.ok || !ret4.lastArtLayer || !isSmartObjectLayer(ret4.lastArtLayer)) {
+            __log("smart_edit_contents: FAIL - " + (ret4.reason || "not SO"));
+            __push_unique(__report.missingPaths, String(soPath));
+            closeSOChain(ret4.openedDocs, false);
+            return;
+        }
+
+        __log("smart_edit_contents: opening SO at '" + soPath + "'");
+        var innerDoc = openSOAndReturnDoc(ret4.lastArtLayer);
+
+        // Ở đây chỉ log như bản gốc; nếu muốn đầy đủ có thể đệ quy dispatcher.
+        __log("smart_edit_contents: running " + act.inner.length + " inner actions");
+
+        try { innerDoc.save(); __log("smart_edit_contents: inner doc saved"); }
+        catch (e) { __log("smart_edit_contents: save error - " + e); }
+
+        try { innerDoc.close(SaveOptions.SAVECHANGES); __log("smart_edit_contents: inner doc closed"); }
+        catch (e2) { __log("smart_edit_contents: close error - " + e2); }
+
+        closeSOChain(ret4.openedDocs, true);
+    }
+
+    function dispatchAction(ai, act) {
+        if (!act || !act.type) { __log("Action[" + ai + "]: invalid/empty"); return; }
+        var t = act.type;
+        __log("Action[" + ai + "] type=" + t + " | groupPath=" + (act.groupPath || "") + " | path=" + (act.path || ""));
+
+        switch (t) {
+            case "group_choice":         return handle_group_choice(ai, act);
+            case "text_replace":         return handle_text_replace(ai, act);
+            case "text_parse":           return handle_text_parse(ai, act);
+            case "visibility":           return handle_visibility(ai, act);
+            case "smart_edit_contents":  return handle_smart_edit_contents(ai, act);
+            default:
                 __log("Action[" + ai + "]: UNKNOWN type '" + t + "'");
                 __pushParamError(ai, t, "Unknown action type", null);
-            }
         }
+    }
 
-                // ===== Export (JPG / PNG tùy config) =====
+    function exportOutput(cfg, psdFile, docRef) {
         var outFolder = new Folder(cfg.outputFolder || (Folder.myDocuments.fsName + "/psd_export"));
-        if (!outFolder.exists) {
-            outFolder.create();
-            __log("Created output folder: " + outFolder.fsName);
-        }
+        if (!outFolder.exists) { outFolder.create(); __log("Created output folder: " + outFolder.fsName); }
 
-        // NEW: đọc format từ config, mặc định jpg
         var outFormat = (cfg.outputFormat ? String(cfg.outputFormat) : "jpg").toLowerCase();
         if (outFormat === "jpeg") outFormat = "jpg";
 
-        // tên file xuất
         var outName = cfg.outputFilename;
         if (!outName || outName === "") {
-            // nếu không gửi sẵn tên thì tự build
-            if (outFormat === "png") {
-                outName = psdFile.name.replace(/\.[^\.]+$/, "") + "_export.png";
-            } else {
-                outName = psdFile.name.replace(/\.[^\.]+$/, "") + "_export.jpg";
-            }
+            if (outFormat === "png") outName = psdFile.name.replace(/\.[^\.]+$/, "") + "_export.png";
+            else outName = psdFile.name.replace(/\.[^\.]+$/, "") + "_export.jpg";
         }
-
         var outFile = new File(outFolder.fsName + "/" + outName);
 
         if (outFormat === "png") {
-            // ---- PNG ----
             var pngOpt = new PNGSaveOptions();
             __log("Exporting PNG -> " + outFile.fsName);
-            doc.saveAs(outFile, pngOpt, true, Extension.LOWERCASE);
+            docRef.saveAs(outFile, pngOpt, true, Extension.LOWERCASE);
             __log("Export PNG OK: " + outFile.fsName);
         } else {
-            // ---- JPG (mặc định) ----
             var jpgQ = (typeof cfg.jpgQuality === "number")
                 ? Math.min(12, Math.max(0, Math.round(cfg.jpgQuality)))
                 : 12;
@@ -1053,33 +988,53 @@ export_psd_configurable.jsx (unified traversal with full reporting)
             jpgOpt.matte = MatteType.NONE;
 
             __log("Exporting JPG -> " + outFile.fsName + " | quality=" + jpgQ);
-            doc.saveAs(outFile, jpgOpt, true, Extension.LOWERCASE);
+            docRef.saveAs(outFile, jpgOpt, true, Extension.LOWERCASE);
             __log("Export JPG OK: " + outFile.fsName);
         }
+    }
 
-    }catch(e){ 
-        __log("TOP-LEVEL ERROR: " + e); 
+    // ========== Chạy Main ==========
+    try {
+        var cfg = loadConfigOrReport(configPath);
+        if (!cfg) { return; }
+
+        var psdFile = new File(cfg.psdFilePath);
+        doc = openPSDOrReport(psdFile.fsName);
+        if (!doc) { return; }
+
+        var acts = cfg.actions || [];
+        __log("Actions count: " + acts.length);
+
+        for (var ai = 0; ai < acts.length; ai++) {
+            dispatchAction(ai, acts[ai]);
+        }
+
+        exportOutput(cfg, psdFile, doc);
+
+    } catch (eMain) {
+        __log("TOP-LEVEL ERROR: " + eMain);
         __report.configErrors.push({
             code: "unexpectedError",
-            message: String(e)
+            message: String(eMain)
         });
-    }
-    finally{
-        try{
+    } finally {
+        try {
             __writeReportJSON(resultPath);
-        }catch(e){
-            __log("Final report write error: " + e);
+        } catch (eWR) {
+            __log("Final report write error: " + eWR);
         }
-        
-        try{
-            if(doc) {
+
+        try {
+            if (doc) {
                 doc.close(SaveOptions.DONOTSAVECHANGES);
                 __log("Closed main doc (DONOTSAVECHANGES)");
             }
-        }catch(e){
-            __log("Doc close error: " + e);
+        } catch (eC) {
+            __log("Doc close error: " + eC);
         }
-        
+
         __log("=== END ===");
     }
+
+    
 })();

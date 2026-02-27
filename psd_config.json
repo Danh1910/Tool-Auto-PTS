@@ -1,54 +1,62 @@
 {
-  "psdFilePath": "C:\\Users\\MSI\\Design_PSD\\BSCK9-NTM-THD-SCK.psd",
+  "psdFilePath": "C:\\Users\\MSI\\Design_PSD\\PRE-LECTURE07-PTH-KCASE.psd",
   "outputFolder": "C:\\Users\\MSI\\Design_PSD\\Image_output",
-  "outputFilename": "4770616EXNPH_200319.jpg",
-  "jpgQuality": 12,
+  "outputFilename": "5765863TWBQC_255396.jpg",
+  "outputFormat": "jpg",
+  "mode": "test",
   "actions": [
     {
       "type": "group_choice",
-      "groupPath": "Group 6>Girl>Skin",
-      "showLayer": "Skin 2"
+      "groupPath": "quotes>quotes",
+      "showLayer": "2"
     },
     {
       "type": "group_choice",
-      "groupPath": "Group 6>Girl>Shirt",
-      "showLayer": "T-shirt 2"
+      "groupPath": "girl>body",
+      "showLayer": "tan-1"
     },
     {
       "type": "group_choice",
-      "groupPath": "Group 6>Girl>Pants",
-      "showLayer": "Pants 7"
+      "groupPath": "girl>eyes",
+      "showLayer": "2"
     },
     {
       "type": "group_choice",
-      "groupPath": "Group 6>Girl>Hair",
-      "showLayer": "Hair 15"
+      "groupPath": "girl>jean",
+      "showLayer": "4"
     },
     {
       "type": "group_choice",
-      "groupPath": "Group 6>Girl>Eye",
-      "showLayer": "Eye 3"
+      "groupPath": "girl>t shirt",
+      "showLayer": "10"
     },
     {
       "type": "group_choice",
-      "groupPath": "Group 6>Girl>Glasses",
-      "showLayer": "Glasses 1"
+      "groupPath": "girl>hair",
+      "showLayer": "47"
     },
     {
       "type": "group_choice",
-      "groupPath": "Group 6>Girl>Book",
-      "showLayer": "Book 3"
+      "groupPath": "girl>glass",
+      "showLayer": "Glasses"
     },
     {
       "type": "group_choice",
-      "groupPath": "Group 6>Girl>Group 4",
-      "showLayer": "Just a Girl Who Loves Books"
+      "groupPath": "girl>book",
+      "showLayer": "6"
+    },
+    {
+      "type": "group_choice",
+      "groupPath": "girl>shoes",
+      "showLayer": "1"
     },
     {
       "type": "text_replace",
-      "groupPath": "",
-      "layerName": "Jessica",
-      "text": "Janette"
+      "groupPath": "Elizabeth>Elizabeth",
+      "layerName": "Elizabeth",
+      "text": "Sexxxy Mama",
+      "apply": "text"
     }
-  ]
+  ],
+  "jpgQuality": 12
 }

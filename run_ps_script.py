@@ -107,7 +107,7 @@ def main():
             ps = win32com.client.Dispatch("Photoshop.Application")
             # Hide the UI
             try:
-                ps.Visible = False
+                ps.Visible = True
             except Exception:
                 pass
             break
